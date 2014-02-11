@@ -1,0 +1,85 @@
+#!/usr/bin/env python
+"""
+./bin/sdb-backup -e utility -d JenkinsBuilds ./databags
+"""
+import json
+import k.aws.config
+import k.aws.sdb
+import k.stdlib.logging.config
+import logging
+import os
+import os.path
+from optparse import OptionParser
+
+def backup_domain(domain, directory):
+	dirname = os.path.join(directory, domain.name)
+	logging.info("Backing up domain {0} ...".format(domain.name))
+	if not os.path.exists(dirname):
+		os.makedirs(dirname)
+
+	query = "select * from {0}".format(domain.name)
+	next_token = None
+	while True:
+		items = domain.select(query, next_token=next_token, consistent_read=True)
+		next_token = items.next_token
+		for item in items:
+			logging.info("Backing up item {0} ...".format(item.name))
+			filename = os.path.join(dirname, "{0}.json".format(item.name))
+			with open(filename, "w") as outfile:
+				outfile.write(json.dumps(item, indent=4, sort_keys=True))
+				outfile.write("\n")
+
+		if not next_token:
+			break
+
+def backup_sdb(conn, domain_names, directory):
+	if not domain_names:
+		next_token = None
+		while True:
+			domains = conn.get_all_domains(next_token=next_token)
+			next_token = domains.next_token
+			domain_names.extend([domain.name for domain in domains])
+			if not next_token:
+				break
+
+	for domain_name in domain_names:
+		domain = conn.get_domain(domain_name)
+		backup_domain(domain, directory)
+
+def option_parser():
+	usage = "usage: %prog [OPTIONS] DIRECTORY\n\n"
+	usage += "Backup AWS SimpleDB"
+	parser = OptionParser(usage=usage)
+	k.stdlib.logging.config.get_logging_options(parser)
+	k.aws.config.get_aws_options(parser)
+	parser.add_option("-d", "--domain", dest="domains", action="append", default=[],
+			help="Backup these specific domains; if not specified, backup all domains.")
+	return parser
+
+def main():
+	parser = option_parser()
+	(opts, args) = parser.parse_args()
+	k.stdlib.logging.config.configure_logging(opts)
+
+	if len(args) != 1:
+		parser.error("One argument required: DIRECTORY")
+
+	directory = args[0]
+
+	if not os.path.exists(directory):
+		parser.error("{0} does not exist".format(directory))
+
+	if not os.path.isdir(directory):
+		parser.error("{0} is not a directory".format(directory))
+
+	creds = k.aws.config.get_keys(opts)
+	conn = k.aws.sdb.connect(creds)
+	backup_sdb(conn, opts.domains, directory)
+
+if __name__=='__main__':
+	main()
+
+# Local Variables:
+# tab-width: 4
+# indent-tabs-mode: t
+# End:

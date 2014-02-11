@@ -1,0 +1,65 @@
+#!/usr/bin/env python
+import sys
+import logging
+import boto
+import k.aws.config
+import k.aws.ec2
+import k.stdlib.logging.config
+from optparse import OptionParser
+import pprint
+import json
+import json.tool
+
+__version__ = "$Revision: 0 $"
+
+def desc_group(conn):
+	groups = conn.get_all_security_groups()
+	for group in groups:
+		print group.name
+
+def main():
+	parser = option_parser()
+	(options, args) = parser.parse_args()
+	k.stdlib.logging.config.configure_logging(options)
+	creds = k.aws.config.get_keys(options)
+	conn = k.aws.ec2.connect(creds)
+	instance = ""
+	if len(args) < 1:
+		print "You need to provide identifying info like an instance, ip address or dns name"
+		sys.exit(2)
+
+	document = {'instances' : dict() }
+	# all_instances = k.aws.ec2.all_instances(conn)
+	all_instances = k.aws.ec2.KInstances(conn)
+	for identifying_info in args:
+		instance_tags = dict()
+		instance_data = dict()
+
+		instance = all_instances.lookup(identifying_info)
+		instance_data['public_dns_name'] = instance.public_dns_name
+		instance_data['private_dns_name'] = instance.private_dns_name
+
+		document['instances'][instance.id] = dict()
+		document['instances'][instance.id]['instance_data'] = instance_data
+		document['instances'][instance.id]['instance_tags'] = instance.tags
+
+	print(json.dumps(document, sort_keys=True, indent=4, separators=(',', ': ')))
+
+
+def option_parser():
+	usage = "usage: %prog [options] <instance1> [<instance2>, ...]"
+	version = "%prog (" + __version__ + ")"
+	description = "Lists ec2 tags on an instance (provided the ID, dns name or IP address)."
+	parser = OptionParser(usage=usage, version=version, description=description)
+	k.stdlib.logging.config.get_logging_options(parser)
+	k.aws.config.get_aws_options(parser)
+	return parser
+
+if (__name__ == "__main__"):
+	main()
+
+
+# Local Variables:
+# tab-width: 4
+# indent-tabs-mode: t
+# End:

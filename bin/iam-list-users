@@ -1,0 +1,67 @@
+#!/usr/bin/env python
+
+import os
+import logging
+import sys
+import boto
+import k.aws
+import k.aws.config
+import k.aws.iam as iam
+import pprint
+
+
+import k.stdlib.logging.config
+from optparse import OptionParser
+
+def parse_options():
+	usage = "usage: %prog [options] [prefix]\n\n"
+	usage += "Cleans out empty keys with the prefix"
+
+	parser = OptionParser(usage=usage)
+	k.stdlib.logging.config.get_logging_options(parser)
+	k.aws.config.get_aws_options(parser)
+	k.aws.iam.get_iam_options(parser)
+	parser.add_option(
+		"-u", "--user", dest="user", default=None,
+		help="A substring to look up in user names")
+	parser.add_option(
+		"-p", "--no-pprint", dest="pprint", default=True, action = 'store_false',
+		help="Disable multi-line pretty-printing")
+	return parser
+
+def simple_print(arg):
+	print arg
+
+def main():
+	parser = parse_options()
+	(options, args) = parser.parse_args()
+	k.stdlib.logging.config.configure_logging(options)
+	if options.pprint:
+		printer=pprint.pprint
+	else:
+		printer=simple_print
+	try:
+		creds = k.aws.config.get_keys(options)
+		conn = k.aws.iam.connect(creds)
+		users = iam.get_all_users(conn)
+		for u in users:
+			if options.user:
+				if options.user in user['user_name']:
+					printer(u)
+			else:
+				printer(u)
+	except boto.exception.BotoServerError, e:
+		if 'security token' in str(e):
+			sys.stderr.write("This can't be used with a security token.  Use --file.\n");
+		else:
+			sys.stderr.write(str(e) + "\n")
+		sys.exit(1)
+
+if __name__ == '__main__':
+	main()
+
+# Local Variables:
+# tab-width: 4
+# indent-tabs-mode: t
+# whitespace-mode: t
+# End:

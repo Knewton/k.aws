@@ -1,0 +1,38 @@
+#!/usr/bin/env python
+import os
+import logging
+import sys
+import k.stdlib.logging.config
+from optparse import OptionParser
+from k.aws.tools import get_tools
+
+def install_tools():
+	tools = get_tools()
+	for tool in tools:
+		print "Downloading %s" % tool.name()
+		tool.download_tool()
+		print "Installing %s" % tool.name()
+		tool.install_tool()
+
+def main():
+	parser = optionParser()
+	(options, args) = parser.parse_args()
+	k.stdlib.logging.config.configure_logging(options)
+	install_tools()
+
+def optionParser():
+	usage = "usage: %prog [options] [key]\n\n"
+	usage += "Installs a set of aws tools for use with aws-env.\n"
+	usage += "\tec2-api tools\n"
+
+	parser = OptionParser(usage=usage)
+	k.stdlib.logging.config.get_logging_options(parser)
+	return parser
+
+if __name__=='__main__':
+	main()
+
+# Local Variables:
+# tab-width: 4
+# indent-tabs-mode: t
+# End:

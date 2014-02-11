@@ -1,0 +1,84 @@
+#!/usr/bin/env python
+import os
+import logging
+import sys
+import boto
+import k.aws.config
+import k.aws.s3
+import k.stdlib.logging.config
+from optparse import OptionParser
+
+def list_keys(bucket, prefix, short_format, newest, substring, use_delimeter, delimiter_char):
+	if use_delimeter is True:
+		keys = bucket.list(prefix=prefix, delimiter=delimiter_char)
+	else:
+		keys = bucket.list(prefix=prefix)
+	last = None
+	for key in keys:
+		if substring is None or substring in key.name:
+			if short_format:
+				if newest:
+					last = key.name
+				else:
+					print key.name
+			else:
+				size_kb = key.size / 1024
+				output = "%s\t%s\t%s" % (key.last_modified, key.name, size_kb)
+				if newest:
+					last = output
+				else:
+					print output
+
+	if newest and last:
+		print last
+
+def main():
+	parser = optionParser()
+	(options, args) = parser.parse_args()
+	k.stdlib.logging.config.configure_logging(options)
+
+	#try:
+	creds = k.aws.config.get_keys(options)
+	bucket_name = k.aws.s3.get_bucket_name(options)
+	conn = k.aws.s3.connect(
+		creds, bucket_name=bucket_name, ordinary=options.ordinary)
+	bucket = k.aws.s3.get_bucket(conn, options)
+	prefix = None
+	if len(args) > 0:
+		prefix = args[0]
+	list_keys(
+		bucket, prefix, options.short_format, options.newest,
+		options.substring, options.use_delimiter,
+		options.delimiter_char)
+	#except boto.exception.BotoServerError, e:
+	#	sys.stderr.write(e.message + "\n")
+	#	sys.exit(1)
+
+def optionParser():
+	usage = "usage: %prog [options] [prefix]\n\n"
+	usage += "Lists all keys in an s3 bucket"
+
+	parser = OptionParser(usage=usage)
+	k.stdlib.logging.config.get_logging_options(parser)
+	k.aws.config.get_aws_options(parser)
+	k.aws.s3.get_s3_options(parser)
+	parser.add_option(
+		"-d", action="store_true", dest="use_delimiter",
+		default=False, help="Only list data within the delimiter specified.")
+	parser.add_option(
+		"--delimiter", dest="delimiter_char",
+		default='/', help="Use this delimiter.")
+	parser.add_option(
+		"-l", "--long-format", action="store_false", dest="short_format",
+		default=True, help="List filenames with metadata.")
+	parser.add_option(
+		"--newest", action="store_true", dest="newest", default=False,
+		help="Only show the newest entry.")
+	parser.add_option(
+		"--substring", dest="substring",
+		help="Substring filter for file names.")
+
+	return parser
+
+if __name__=='__main__':
+	main()

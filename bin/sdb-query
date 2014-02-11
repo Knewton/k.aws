@@ -1,0 +1,47 @@
+#!/usr/bin/env python
+import os
+import sys
+import json
+import boto
+import logging
+import k.aws.config
+import k.aws.sdb
+import k.stdlib.logging.config
+from optparse import OptionParser
+
+def query(conn, domain, query):
+	results = domain.select(query)
+	out = []
+	for result in results:
+		out.append({result.name: result})
+	print json.dumps(out, indent=2)
+
+def main():
+	parser = optionParser()
+	(options, args) = parser.parse_args()
+	k.stdlib.logging.config.configure_logging(options)
+	if len(args) != 1:
+		sys.stderr.write("One arg required [query string]\n")
+		sys.exit(1)
+	creds = k.aws.config.get_keys(options)
+	conn = k.aws.sdb.connect(creds)
+	domain = k.aws.sdb.get_domain(conn, options)
+	query(conn, domain, args[0])
+
+def optionParser():
+	usage = "usage: %prog [options] [Query string]\n\n"
+	usage += "Query SimpleDB. Prints the results as json on stdout"
+
+	parser = OptionParser(usage=usage)
+	k.stdlib.logging.config.get_logging_options(parser)
+	k.aws.config.get_aws_options(parser)
+	k.aws.sdb.get_sdb_options(parser)
+	return parser
+
+if __name__=='__main__':
+	main()
+
+# Local Variables:
+# tab-width: 4
+# indent-tabs-mode: t
+# End:

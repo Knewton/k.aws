@@ -1,0 +1,43 @@
+#!/usr/bin/env python
+import boto
+import logging
+import os
+import sys
+import k.aws.config
+import k.aws.sdb
+import k.stdlib.logging.config
+from optparse import OptionParser
+
+def get_domains(conn, options):
+	return conn.get_all_domains()
+
+def main():
+	parser = optionParser()
+	(options, args) = parser.parse_args()
+	k.stdlib.logging.config.configure_logging(options)
+	try:
+		creds = k.aws.config.get_keys(options)
+		conn = k.aws.sdb.connect(creds)
+		domains = get_domains(conn, options)
+		for domain in domains:
+			print domain
+	except Exception, e:
+		sys.stderr.write(str(e) + "\n")
+		sys.exit(1)
+
+def optionParser():
+	usage = "usage: %prog [options]\n\n"
+	usage += "Posts the text of stdin to the given sdb domain"
+
+	parser = OptionParser(usage=usage)
+	k.stdlib.logging.config.get_logging_options(parser)
+	k.aws.config.get_aws_options(parser)
+	return parser
+
+if __name__=='__main__':
+	main()
+
+# Local Variables:
+# tab-width: 4
+# indent-tabs-mode: t
+# End:

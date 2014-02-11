@@ -1,0 +1,118 @@
+#!/usr/bin/env python
+import os
+import logging
+import sys
+import boto
+import datetime
+import k.aws.config
+import k.aws.s3
+import k.stdlib.logging.config
+from optparse import OptionParser
+
+def cache_target_keys(targetbucket):
+	keys = targetbucket.list()
+	output = {}
+	for key in keys:
+		modtime = datetime.datetime.strptime(key.last_modified, "%Y-%m-%dT%H:%M:%S.%fZ")
+		output[key.name] = modtime, key
+	return output
+
+def sync(sourcebucket, targetbucket, mod=False):
+	targetcache = cache_target_keys(targetbucket)
+	keys = sourcebucket.list()
+	for key in keys:
+		modtime = datetime.datetime.strptime(key.last_modified, "%Y-%m-%dT%H:%M:%S.%fZ")
+		if not targetcache.get(key.name) or (modtime > targetcache[key.name][0] and mod):
+			print key.name
+			try:
+				contents = key.get_contents_as_string()
+				if targetcache.has_key(key.name):
+					targetcache[key.name][1].set_contents_from_string(contents)
+				else:
+					k.aws.s3.put_key(targetbucket, key.name, contents)
+			except Exception, e:
+				sys.stderr.write("Error syncing %s: %s\n" % (key.name, e))
+
+
+def get_creds(options):
+	sourceopts = k.aws.config.ManualOptions(
+		None, None, options.knewton_env, False, options.forcefile)
+	sourcecreds = k.aws.config.get_keys(sourceopts)
+	env2 = options.knewton_env2
+	if not env2:
+		env2 = options.knewton_env2
+	targetopts = k.aws.config.ManualOptions(
+		None, None, env2, True, options.forcefile)
+	targetcreds = k.aws.config.get_keys(targetopts)
+	return sourcecreds, targetcreds
+
+def main():
+	parser = optionParser()
+	(options, args) = parser.parse_args()
+	k.stdlib.logging.config.configure_logging(options)
+
+	try:
+		sourcecreds, targetcreds = get_creds(options)
+		source_bucket_name = k.aws.s3.get_bucket_name(k.aws.s3.ManualS3Options(options.bucket))
+		sourceconn = k.aws.s3.connect(
+			creds, bucket_name=source_bucket_name, ordinary=options.ordinary)
+		target_bucket_name = k.aws.s3.get_bucket_name(k.aws.s3.ManualS3Options(options.bucket2))
+		targetconn = k.aws.s3.connect(
+			creds, bucket_name=target_bucket_name, ordinary=options.ordinary2)
+		sourcebucket = k.aws.s3.get_bucket(
+			sourceconn, k.aws.s3.ManualS3Options(options.bucket))
+		targetbucket = k.aws.s3.get_bucket(
+			targetconn, k.aws.s3.ManualS3Options(options.bucket2))
+		sync(sourcebucket, targetbucket, options.mod)
+	except boto.exception.BotoServerError, e:
+		sys.stderr.write(e.message + "\n")
+		sys.exit(1)
+
+def optionParser():
+	usage = ''.join([
+		"usage: %prog [options] [key]\n\n",
+		"Copies all newer keys from one s3 bucket to another.  Designed",
+		"For use with multiple AWS keys"])
+
+	parser = OptionParser(usage=usage)
+	k.stdlib.logging.config.get_logging_options(parser)
+	parser.add_option(
+		"-e", "--env", dest="knewton_env",
+		help=' '.join(["Knewton environment for source bucket",
+			"(production, staging, utility, stack_iam, etc)"]))
+	parser.add_option(
+		"-E", "--env2", dest="knewton_env2",
+		help=' '.join(["Knewton environment for target bucket",
+			"(production, staging, utility, stack_iam, etc)"]))
+	parser.add_option(
+		"-o", dest="ordinary", default=False, action="store_true",
+		help="Use Ordinary Calling Format (source bucket).")
+	parser.add_option(
+		"-O", dest="ordinary2", default=False, action="store_true",
+		help="Use Ordinary Calling Format (Target bucket).")
+	parser.add_option(
+		"-m", dest="mod",
+		help="Uses mod time as well to decide if the file should sync (default: False)",
+		default=False,
+		action="store_true")
+	parser.add_option(
+		"--file", dest="forcefile",
+		help="Force use of files in knewton config (Default: readonly)",
+		default=False,
+		action="store_true")
+	parser.add_option(
+		"-b", "--bucket", dest="bucket",
+		help="Source S3 Bucket Name")
+	parser.add_option(
+		"-B", "--bucket2", dest="bucket2",
+		help="Target S3 Bucket Name")
+
+	return parser
+
+if __name__=='__main__':
+	main()
+
+# Local Variables:
+# tab-width: 4
+# indent-tabs-mode: t
+# End:

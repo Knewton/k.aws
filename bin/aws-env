@@ -1,0 +1,93 @@
+#!/usr/bin/env python
+import os
+import logging
+import sys
+import yaml
+import k.aws.config
+import k.stdlib.logging.config
+from optparse import OptionParser
+from k.aws.tools import get_tools
+from k.aws.config import K_AWS_PATH
+
+def create_path(tool_paths):
+	sys_path = os.environ['PATH'].split(":")
+	retpath = []
+	for path in sys_path:
+		if path.find(".k.aws/tools/") == -1:
+			retpath.append(path)
+	retpath.extend(tool_paths)
+	return ":".join(retpath)
+
+def get_config_vars():
+	if os.path.exists(K_AWS_PATH + "/tools.yml"):
+		with open(K_AWS_PATH + "/tools.yml") as tools:
+			config = yaml.load(tools)
+			return config['variables']
+	return {}
+
+def export_env_vars(rcreds):
+	variables = {
+		'AWS_ACCESS_KEY_ID': rcreds.creds.access,
+		'AWS_SECRET_ACCESS_KEY': rcreds.creds.secret,
+		"AWS_SESSION_TOKEN": rcreds.creds.token,
+		"AWS_READMODE": rcreds.creds.mode,
+		"AWS_ACCOUNT": rcreds.creds.env,
+		"EC2_PRIVATE_KEY": rcreds.creds.privatekey,
+		"EC2_CERT": rcreds.creds.cert
+	}
+	paths = []
+	tools = get_tools()
+	for tool in tools:
+		if tool.installed():
+			if rcreds.creds.token and not tool.sts_works:
+				tool_vars = tool.add_variables(rcreds)
+				for key in tool_vars.keys():
+					if not variables.has_key(key):
+						variables[key] = None
+			else:
+				variables.update(tool.add_variables(rcreds))
+				paths.extend(tool.paths())
+				files = tool.file_config(rcreds)
+				for conf in files:
+					with open(conf['filename'], 'w') as f:
+						f.write(conf['contents'])
+	variables.update(get_config_vars())
+	output = []
+	for var in variables.keys():
+		output.extend(set_nullable_var(variables[var], var))
+	output.extend(set_nullable_var(create_path(paths), 'PATH'))
+	print '\n'.join(output)
+
+def set_nullable_var(var, name):
+	output = []
+	if var:
+		output.append("export %s=%s" %(name, var))
+	else:
+		output.append("export %s=" % name)
+		output.append("unset %s" % name)
+	return output
+
+def main():
+	parser = optionParser()
+	(options, args) = parser.parse_args()
+	k.stdlib.logging.config.configure_logging(options)
+	creds = k.aws.config.get_region_keys(options)
+	export_env_vars(creds)
+
+def optionParser():
+	usage = "usage: %prog [options] [key]\n\n"
+	usage += "Prints out variables needed to get a properly set up AWS env."
+
+	parser = OptionParser(usage=usage)
+	k.stdlib.logging.config.get_logging_options(parser)
+	k.aws.config.get_aws_options(parser, rw=True)
+	k.aws.config.get_region_option(parser)
+	return parser
+
+if __name__=='__main__':
+	main()
+
+# Local Variables:
+# tab-width: 4
+# indent-tabs-mode: t
+# End:

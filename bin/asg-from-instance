@@ -1,0 +1,100 @@
+#!/usr/bin/env python
+
+# Get the name of the autoscale group is associated with an instance.
+# The instance is provided as either an instance id, or the public or
+# private dns name or ip address.  Or it can be run in a way 
+# where it uses the name of the host that it's running on.
+#
+# Useful for eval() within a shell/chef recipe.
+#
+# Used to allow Priam to bootstrap properly.  And for cassandra to
+# work with Priam.
+#
+# This script needs the following ARN permissions:
+# "cloudformation:DescribeStackResource",
+# "ec2:DescribeInstances",
+# "autoscaling:DescribeAutoScalingGroups",
+#
+# An example:
+#   700 pn@PN-mac 02:27 ~/dvcs/lib/python/k.aws $ bin/asg-from-instance -e staging --ip-lookup ec2-23-22-98-252.compute-1.amazonaws.com 
+#   PN-cassandra-CassandraGroupAxxx32653432653762322d363532342d313165322d623430362d633832613134303433663363-1UMG6ZCM0W7EI
+#   701 pn@PN-mac 02:27 ~/dvcs/lib/python/k.aws $
+
+
+
+import sys
+
+import yaml
+import socket
+import k.aws
+import k.aws.ec2
+import k.aws.config
+import boto
+import itertools
+import logging
+import k.stdlib.logging.config
+from optparse import OptionParser
+
+def get_asg_from_id(conn, instance_id):
+	return conn.get_all_autoscaling_instances([instance_id])[0].group_name
+
+def get_instance_from_name_or_ip(creds, fqdn):
+	conn = k.aws.ec2.connect(creds)
+	mapping = dict()
+	for i in k.aws.all_instances(conn):
+		if fqdn in (i.private_dns_name, i.public_dns_name, i.ip_address, i.ip_address):
+			return i.id
+	raise ValueError, "No matches found" 
+
+def parse_options():
+	usage = "usage: %prog [options] [prefix]\n\n"
+	usage += "Cleans out empty keys with the prefix"
+
+	parser = OptionParser(usage=usage)
+	k.stdlib.logging.config.get_logging_options(parser)
+	k.aws.config.get_aws_options(parser)
+	parser.add_option(
+		"--instance", dest="known_instance", default=None,
+		help="Lookup based upon this instance ID")
+	parser.add_option(
+		"--ip-lookup", dest="ip_lookup", default=None,
+		help="Lookup based upon the provided IP address or name (public or private for either)")
+	parser.add_option(
+		"-m", "--me", dest="me", default=False, action='store_true',
+		help="Lookup based upon this current instance (must be run on that instance)")
+	return parser
+
+
+def main(argv = sys.argv[:]):
+	(options, args) = parse_options().parse_args()
+	k.stdlib.logging.config.configure_logging(options)
+	creds = k.aws.config.get_keys(options)
+	if options.me or options.ip_lookup:
+		if options.me:
+			name = socket.getfqdn()
+		else:
+			name = options.ip_lookup
+		ec2_conn = k.aws.ec2.connect(creds)
+		instance_id = k.aws.ec2.get_instance_from_name_or_ip(ec2_conn, name)
+	else:
+		instance_id = options.known_instance
+	conn = boto.connect_autoscale(aws_access_key_id=creds.access,
+		aws_secret_access_key=creds.secret,
+		security_token=creds.token)
+	try:
+		my_asg_name = get_asg_from_id(conn, instance_id)
+	except IndexError as ie:
+		sys.stderr.write('No autoscale group found matching your criteria\n')
+		sys.exit(1)
+	print my_asg_name
+
+if __name__ == '__main__':
+	main(sys.argv)
+
+
+# Local Variables: 
+# mode: python
+# tab-width: 4
+# indent-tabs-mode: t
+# whitespace-mode: t
+# End:             

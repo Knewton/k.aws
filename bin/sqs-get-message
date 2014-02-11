@@ -1,0 +1,87 @@
+#!/usr/bin/env python
+import boto
+import logging
+import os
+import sys
+import k.aws.config
+import k.aws.sqs
+import k.stdlib.logging.config
+from optparse import OptionParser
+from popen2 import Popen3
+from boto.sqs.connection import SQSConnection
+from boto.sqs.message import Message
+
+def execute_command(text, command):
+	pid = Popen3(command)
+	pid.tochild.write(text)
+	pid.tochild.close()
+	report = "".join(pid.fromchild.readlines())
+	sys.stdout.write(report)
+	if not pid.wait() == 0:
+		raise Exception("command failed")
+
+def handle_message(message, options, command):
+	text = message.get_body()
+	execute_command(text, command)
+
+def handle_messages(queue, options, command):
+	messages = queue.get_messages(num_messages=1)
+	if len(messages) == 1:
+		handle_message(messages[0], options, command)
+		queue.delete_message(messages[0])
+		if not options.one:
+			handle_messages(queue, options, command)
+
+def get_queue(conn, options):
+	queue_name = None
+	if os.environ.has_key("SQS_QUEUE"):
+		queue_name = os.environ["SQS_QUEUE"]
+	if options.queue:
+		queue_name = options.queue
+	if not queue_name:
+		sys.stderr.write("No queue name passed in \n")
+		sys.exit(1)
+	queue = conn.get_queue(queue_name)
+	return queue
+
+def main():
+	parser = optionParser()
+	(options, args) = parser.parse_args()
+	k.stdlib.logging.config.configure_logging(options)
+
+	if len(args) != 1:
+		sys.stderr.write("Requires exactly one argument in the form of the command string to execute with the message as stdin\n")
+		sys.exit(1)
+
+	try:
+		creds = k.aws.config.get_keys(options)
+		conn = k.aws.sqs.connect(creds)
+		queue = get_queue(conn, options)
+		if not queue:
+			sys.stderr.write(options.queue + " queue does not exist\n")
+			sys.exit(1)
+		handle_messages(queue, options, args[0])
+	except boto.exception.SQSError, e:
+		sys.stderr.write(str(e) + "\n")
+		sys.exit(1)
+
+def optionParser():
+	usage = "usage: %prog [options] [arg]\n\n"
+	usage += "Handles the next message(s) in the given sqs queue and passes it to the stdin of the command passed in as arg"
+
+	parser = OptionParser(usage=usage)
+	k.aws.config.get_aws_options(parser, rw=True)
+	k.aws.sqs.get_sqs_options(parser)
+	k.stdlib.logging.config.get_logging_options(parser)
+	parser.add_option("-o", "--one", action="store_true", dest="one", help="Process one message instead of all messages until a failure")
+	parser.set_defaults(one = False)
+
+	return parser
+
+if __name__=='__main__':
+	main()
+
+# Local Variables:
+# tab-width: 4
+# indent-tabs-mode: t
+# End:

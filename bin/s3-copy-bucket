@@ -1,0 +1,100 @@
+#!/usr/bin/env python
+import os
+import logging
+import sys
+import boto
+import datetime
+import k.aws.config
+import k.aws.s3
+import k.stdlib.logging.config
+from optparse import OptionParser
+
+def do_parallel_copy(creds, options, prefix, threads, timeout):
+	status = k.aws.s3.parallel_copy_bucket(
+		creds, options.bucket, options.bucket2,
+		options.ordinary, options.ordinary2,
+		prefix=prefix, threads=threads, timeout=timeout,
+		verbose=options.verbose)
+	if not status:
+		sys.exit(1)
+
+def do_serial_copy(creds, options, prefix, timeout):
+	src_bucket_name = k.aws.s3.get_bucket_name(
+		k.aws.s3.ManualS3Options(options.bucket))
+	src_conn = k.aws.s3.connect(
+		creds, bucket_name=src_bucket_name, ordinary=options.ordinary)
+	src_bucket = src_conn.get_bucket(src_bucket_name)
+
+	dst_bucket_name = k.aws.s3.get_bucket_name(
+		k.aws.s3.ManualS3Options(options.bucket2))
+	dst_conn = k.aws.s3.connect(creds,
+		bucket_name=dst_bucket_name, ordinary=options.ordinary2)
+	dst_bucket = dst_conn.get_bucket(dst_bucket_name)
+	if prefix:
+		rs = src_bucket.list(prefix)
+	else:
+		rs = src_bucket.list()
+	for src_key in rs:
+		k.aws.s3.copy_key(src_key, dst_bucket, src_key.name,
+			parallel=1, verbose=options.verbose)
+		print src_key.name
+
+def main():
+	parser = optionParser()
+	(options, args) = parser.parse_args()
+	k.stdlib.logging.config.configure_logging(options)
+
+	if not options.bucket or not options.bucket2:
+		sys.stderr.write("-b and -B required\n")
+		sys.exit(1)
+	try:
+		prefix = None
+		if len(args) > 0:
+			prefix = args[0]
+		threads = int(options.threads)
+		timeout = int(options.timeout)
+		creds = k.aws.config.get_keys(options)
+		if threads > 1:
+			do_parallel_copy(creds, options, prefix, threads, timeout)
+		else:
+			do_serial_copy(creds, options, prefix, timeout)
+	except boto.exception.BotoServerError, e:
+		sys.stderr.write(e.message + "\n")
+		sys.exit(1)
+
+def optionParser():
+	usage = ''.join([
+		"usage: %prog [options] [prefix]\n\n",
+		"Copies all keys from one s3 bucket to another."])
+
+	parser = OptionParser(usage=usage)
+	k.stdlib.logging.config.get_logging_options(parser)
+	k.aws.config.get_aws_options(parser)
+	k.aws.config.get_verbose_option(parser)
+	parser.add_option(
+		"-o", dest="ordinary", default=False, action="store_true",
+		help="Use Ordinary Calling Format (source bucket).")
+	parser.add_option(
+		"-O", dest="ordinary2", default=False, action="store_true",
+		help="Use Ordinary Calling Format (Target bucket).")
+	parser.add_option(
+		"-b", "--bucket", dest="bucket",
+		help="Source S3 Bucket Name")
+	parser.add_option(
+		"-B", "--bucket2", dest="bucket2",
+		help="Target S3 Bucket Name")
+	parser.add_option(
+		"-t", "--threads", default="10", dest="threads",
+		help="Threads (default: 10)")
+	parser.add_option(
+		"-T", "--timeout", default="300", dest="timeout",
+		help="Key copy timeout (default: 300)")
+	return parser
+
+if __name__=='__main__':
+	main()
+
+# Local Variables:
+# tab-width: 4
+# indent-tabs-mode: t
+# End:

@@ -1,0 +1,55 @@
+#!/usr/bin/env python
+import boto
+import logging
+import os
+import sys
+import k.aws.config
+import k.aws.sqs
+import k.stdlib.logging.config
+from boto.sqs.connection import SQSConnection
+from boto.sqs.message import Message
+from optparse import OptionParser
+
+def send_message(queue, doc):
+	m = Message()
+	m.set_body(doc)
+	status = queue.write(m)
+	if not status:
+		sys.stderr.write(status)
+
+def main():
+	parser = optionParser()
+	(options, args) = parser.parse_args()
+	k.stdlib.logging.config.configure_logging(options)
+
+	doc = "".join(sys.stdin.readlines()).strip()
+	if doc == "":
+		sys.stderr.write("No message passed in.\n")
+		sys.exit(1)
+
+	try:
+		creds = k.aws.config.get_keys(options)
+		conn = k.aws.sqs.connect(creds)
+		queue = k.aws.sqs.get_queue(conn, options)
+		send_message(queue, doc)
+	except boto.exception.SQSError, e:
+		sys.stderr.write(str(e) + "\n")
+		sys.exit(1)
+
+def optionParser():
+	usage = "usage: %prog [options]\n\n"
+	usage += "Posts the text of stdin to the given sqs queue"
+
+	parser = OptionParser(usage=usage)
+	k.aws.config.get_aws_options(parser, rw=True)
+	k.aws.sqs.get_sqs_options(parser)
+	k.stdlib.logging.config.get_logging_options(parser)
+	return parser
+
+if __name__=='__main__':
+	main()
+
+# Local Variables:
+# tab-width: 4
+# indent-tabs-mode: t
+# End:

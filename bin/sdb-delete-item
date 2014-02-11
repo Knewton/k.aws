@@ -1,0 +1,47 @@
+#!/usr/bin/env python
+import os
+import sys
+import json
+import boto
+import logging
+import k.aws.config
+import k.aws.sdb
+import k.stdlib.logging.config
+from boto.sdb.item import Item
+from optparse import OptionParser
+
+
+def remove_item(conn, domain, name):
+	# Deals with a bug in boto.  delete_item seems to expect an Item object
+	# not a string like other functions off of Domain.
+	domain.delete_item(Item(domain, name))
+
+def main():
+	parser = optionParser()
+	(options, args) = parser.parse_args()
+	k.stdlib.logging.config.configure_logging(options)
+	if len(args) != 1:
+		sys.stderr.write("One arg [item name] required\n")
+		sys.exit(1)
+	creds = k.aws.config.get_keys(options)
+	conn = k.aws.sdb.connect(creds)
+	domain = k.aws.sdb.get_domain(conn, options)
+	remove_item(conn, domain, args[0])
+
+def optionParser():
+	usage = "usage: %prog [options] [item name]\n\n"
+	usage += "Gets an item from SimpleDB. Prints the results as json on stdout"
+
+	parser = OptionParser(usage=usage)
+	k.stdlib.logging.config.get_logging_options(parser)
+	k.aws.config.get_aws_options(parser)
+	k.aws.sdb.get_sdb_options(parser)
+	return parser
+
+if __name__=='__main__':
+	main()
+
+# Local Variables:
+# tab-width: 4
+# indent-tabs-mode: t
+# End:

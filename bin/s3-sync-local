@@ -1,0 +1,67 @@
+#!/usr/bin/env python
+import sys
+import logging
+import boto
+import k.aws.config
+import k.aws.s3
+import k.stdlib.logging.config
+from optparse import OptionParser
+
+def main():
+	parser = option_parser()
+	(options, args) = parser.parse_args()
+	k.stdlib.logging.config.configure_logging(options)
+
+	## Parsing args into the right vars.
+	if args and len(args) == 2:
+		bucket = args[0]
+		options.bucket = bucket
+		localdir = args[1]
+	else:
+		parser.error("Must specify bucket name and local directory.")
+
+	try:
+		creds = k.aws.config.get_keys(options)
+		bucket_name = k.aws.s3.get_bucket_name(options)
+		conn = k.aws.s3.connect(
+			creds, bucket_name=bucket_name, ordinary=options.ordinary)
+		bucket = k.aws.s3.get_bucket(conn, options)
+		k.aws.s3.sync_local(bucket, localdir, options.prefix, options.debug)
+	except boto.exception.ResumableDownloadException, err:
+		sys.stderr.write("ResumableDownloadException: %s\n", err)
+		sys.exit(1)
+	except boto.exception.BotoServerError, err:
+		sys.stderr.write("BotoServerError: %s\n" % err.reason)
+		sys.exit(1)
+
+def option_parser():
+	""" Generate an option parser with the options listed below.
+
+	Returns optparse.OptionParser used to parse cmd line args.
+	"""
+	usage = ''.join([
+		"usage: %prog [options] bucket localdir\n\n",
+		"Copies a bucket to a local directory."])
+
+	parser = OptionParser(usage=usage)
+	k.stdlib.logging.config.get_logging_options(parser)
+	k.aws.config.get_aws_options(parser, rw=True)
+	k.aws.s3.get_s3_region_options(parser)
+	parser.add_option(
+		"-p", "--prefix", dest="prefix", type="string", default='',
+		help=("Only sync files with the specified prefix. Use trailing slash "
+			"for directory prefixes."))
+	parser.add_option(
+		"--debug", dest="debug", action="store_true",
+		help="Print results for each process's transfer with S3 for debugging.",
+		default=False)
+
+	return parser
+
+if __name__ == '__main__':
+	main()
+
+# Local Variables:
+# tab-width: 4
+# indent-tabs-mode: t
+# End:

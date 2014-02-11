@@ -1,0 +1,96 @@
+#!/usr/bin/env python
+import os
+import logging
+import os.path
+import sys
+import boto
+import k.aws.config
+import k.aws.s3
+import k.stdlib.logging.config
+from boto import exception
+from boto.s3.key import Key
+from optparse import OptionParser
+
+def get_file(options):
+	doc = ""
+	if options.infile:
+		if os.path.exists(options.infile):
+			with open(options.infile, 'r') as fh:
+				doc = "".join(fh.readlines()) 
+		else:
+			sys.stderr.write("File does not exist: %s\n" % options.infile)
+			sys.exit(1)
+	else:
+		doc = "".join(sys.stdin.readlines())
+		if doc == "":
+			sys.stderr.write("No message passed in.\n")
+			sys.exit(1)
+	return doc
+
+def main():
+	parser = optionParser()
+	(options, args) = parser.parse_args()
+	k.stdlib.logging.config.configure_logging(options)
+	if options.mpsize < 5:
+		parser.error("Must specify chunk size > 5MB.")
+	try:
+		creds = k.aws.config.get_keys(options)
+		bucket_name = k.aws.s3.get_bucket_name(options)
+		conn = k.aws.s3.connect(
+			creds, bucket_name=bucket_name, ordinary=options.ordinary)
+		bucket = k.aws.s3.get_bucket(conn, options)
+		## Don't use multipart if infile size < 100MB.
+		if options.infile and os.path.getsize(options.infile) >= options.mpsize*10**6:
+			k.aws.s3.split_and_put_multipart_key(
+					bucket, args[0], options.infile, creds,
+					options.mpsize, options.mpcount, options.debug,
+					options.md5check)
+		else:
+			doc = get_file(options)
+			k.aws.s3.put_key(bucket, args[0], doc)
+	except boto.exception.BotoServerError, e:
+		sys.stderr.write(str(e))
+		sys.exit(1)
+
+def optionParser():
+	usage = "usage: %prog [options] [key]\n\n"
+	usage += "Puts the contents of stdin into the given key in s3 bucket."
+	usage += " Uses multipart upload API unless file is less than 100MB."
+
+	parser = OptionParser(usage=usage)
+	k.stdlib.logging.config.get_logging_options(parser)
+	k.aws.config.get_aws_options(parser, rw=True)
+	k.aws.s3.get_s3_options(parser)
+	parser.add_option(
+		"-i", "--infile", dest="infile",
+		help="Upload file at path instead of using stdin")
+	parser.add_option(
+		"--mps", "--mpsize", dest="mpsize",
+		help=("Upload file as ${mpsize}MB-sized chunks (useful for large"
+				" files >5GB). Chunk size must be > 5MB, and chunk sizes may"
+				" be automatically increased for small files. Defaults to"
+				" 100MB-sized chunks."),
+		type=int, default=100, action="store")
+	parser.add_option(
+		"--mpc", "--mpcount", dest="mpcount",
+		help=("If file is larger than 100MB, use ${mpcount} processes to"
+				" upload file using S3 multipart. Defaults to 4, but will"
+				" never exceed the number of chunks uploaded."),
+		type=int, default=4, action="store")
+	parser.add_option(
+		"--skipmd5", dest="md5check",
+		help="Skip data integrity check for multipart S3 uploads.",
+		default=True, action="store_false")
+	parser.add_option(
+		"--debug", dest="debug", action="store_true",
+		help="Print results for each process's upload to S3 for debugging.",
+		default=False)
+	return parser
+
+if __name__=='__main__':
+	main()
+
+# Local Variables:
+# tab-width: 4
+# indent-tabs-mode: t
+# End:

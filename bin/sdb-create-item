@@ -1,0 +1,52 @@
+#!/usr/bin/env python
+import os
+import sys
+import json
+import boto
+import logging
+import k.aws.config
+import k.aws.sdb
+import k.stdlib.logging.config
+from k.aws.sdb import write_item
+from optparse import OptionParser
+
+def alter_item(conn, domain, name, data):
+	item = domain.get_item(name)
+	if not item:
+		domain.new_item(name)
+	write_item(domain, name, data)
+	print json.dumps(domain.get_item(name), indent=2)
+
+def main():
+	parser = optionParser()
+	(options, args) = parser.parse_args()
+	k.stdlib.logging.config.configure_logging(options)
+	if len(args) != 1:
+		sys.stderr.write("One arg [item name] required\n")
+		sys.exit(1)
+	data = None
+	if options.stdin:
+		data = json.load(sys.stdin)
+	creds = k.aws.config.get_keys(options)
+	conn = k.aws.sdb.connect(creds)
+	domain = k.aws.sdb.get_domain(conn, options)
+	alter_item(conn, domain, args[0], data)
+
+def optionParser():
+	usage = "usage: %prog [options] [item name]\n\n"
+	usage += "Creates item [name] if it does not exist, can add attributes from stdin. Prints the results as json on stdout"
+
+	parser = OptionParser(usage=usage)
+	k.stdlib.logging.config.get_logging_options(parser)
+	k.aws.config.get_aws_options(parser)
+	k.aws.sdb.get_sdb_options(parser)
+	parser.add_option("-i", "--stdin", action="store_true", dest="stdin", help="Take attributes in on stdin (as json)")
+	return parser
+
+if __name__=='__main__':
+	main()
+
+# Local Variables:
+# tab-width: 4
+# indent-tabs-mode: t
+# End:

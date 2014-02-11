@@ -1,0 +1,46 @@
+#!/usr/bin/env python
+import boto
+import logging
+import os
+import k.aws.config
+import k.aws.ec2
+import k.stdlib.logging.config
+from optparse import OptionParser
+
+def count_instances(conn):
+	reservations = conn.get_all_instances()
+	counts = {}
+
+	for reservation in reservations:
+		for instance in reservation.instances:
+			key = instance.state
+			counts[key] = counts.get(key, 0) + 1
+			counts['total'] = counts.get('total', 0) + 1
+
+	for key in sorted(counts.keys()):
+		print "%s: %s" % (key, counts[key])
+
+def main():
+	parser = optionParser()
+	(options, args) = parser.parse_args()
+	k.stdlib.logging.config.configure_logging(options)
+	creds = k.aws.config.get_keys(options)
+	conn = k.aws.ec2.connect(creds)
+	count_instances(conn)
+
+def optionParser():
+	usage = "usage: %prog [options] [key]\n\n"
+	usage += "Prints a count of aws instances for an account"
+
+	parser = OptionParser(usage=usage)
+	k.stdlib.logging.config.get_logging_options(parser)
+	k.aws.config.get_aws_options(parser)
+	return parser
+
+if __name__=='__main__':
+	main()
+
+# Local Variables:
+# tab-width: 4
+# indent-tabs-mode: t
+# End:

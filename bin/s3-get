@@ -1,0 +1,126 @@
+#!/usr/bin/env python
+"""usage: s3-get [options] KEY
+s3-get will fetch either a single file from an s3 bucket, or
+multiple files when -p/--prefix is specified.
+
+Normally the output will be written to stdout, so the usage would be:
+  $ s3-get [options] KEY > OUTPUT_FILE
+Alternatively, you can specify the output file as an option:
+  $ s3-get [options] --filename OUTPUT_FILE KEY
+Or, you can specify the output directory as an option:
+  $ s3-get [options] --directory OUTPUT_DIR KEY
+
+If -d/--directory is provided, then the directory option will be used
+as a prefix, and the requested file(s) will be written directly to
+the filesystem by either:
+
+a) When fetching a single file, the filename will be
+     DIRECTORY/$(basename KEY)
+b) When using a prefix, the string made will be
+     DIRECTORY/$(basename KEY)
+   for each key in the bucket that meets the prefix criteria
+"""
+
+import os
+import logging
+import sys
+import boto
+import k.aws.config
+import k.aws.s3
+import k.stdlib.logging.config
+from boto import exception
+from boto.s3.key import Key
+from boto.s3.bucket import Bucket
+from optparse import OptionParser
+
+# Single key
+def get(bucket, filename, directory, address):
+	if filename:
+		get_to_filename(bucket, filename, address)
+	elif directory:
+		get_to_directory(bucket, directory, address)
+	else:
+		get_to_stdout(bucket, address)
+
+def get_to_filename(bucket, filename, address):
+	key = bucket.get_key(address)
+	key.get_contents_to_filename(filename)
+
+def get_to_directory(bucket, directory, address):
+	key = bucket.get_key(address)
+	filename = os.path.join(directory, os.path.basename(key.name))
+	key.get_contents_to_filename(filename)
+
+def get_to_stdout(bucket, address):
+	key = bucket.get_key(address)
+	key.get_contents_to_file(sys.stdout)
+
+# [Prefix] keys
+def get_keys(bucket, directory, prefix):
+	if directory:
+		get_keys_to_directory(bucket, directory, prefix)
+	else:
+		get_keys_to_stdout(bucket, prefix)
+
+def get_keys_to_directory(bucket, directory, prefix):
+	keys = bucket.list(prefix=prefix)
+	for key in keys:
+		filename = os.path.join(directory, os.path.basename(key.name))
+		key.get_contents_to_filename(filename)
+
+def get_keys_to_stdout(bucket, prefix):
+	keys = bucket.list(prefix=prefix)
+	for key in keys:
+		key.get_contents_to_file(sys.stdout)
+
+def main():
+	parser = optionParser()
+	(options, args) = parser.parse_args()
+	k.stdlib.logging.config.configure_logging(options)
+	if options.filename and options.prefix:
+		parser.error(' '.join(["If you specify --prefix, you",
+				"need to specify --directory, not --filename."]))
+	if options.filename and options.directory:
+		parser.error(' '.join(["You cannot specify both",
+				"--filename and --directory."]))
+
+	try:
+		creds = k.aws.config.get_keys(options)
+		bucket_name = k.aws.s3.get_bucket_name(options)
+		conn = k.aws.s3.connect(
+			creds, bucket_name=bucket_name, ordinary=options.ordinary)
+		bucket = k.aws.s3.get_bucket(conn, options)
+		if options.prefix:
+			get_keys(bucket, options.directory, options.prefix)
+		else:
+			get(bucket, options.filename, options.directory, args[0])
+	except boto.exception.S3ResponseError as err:
+		sys.stderr.write("S3ResponseError: %s\n" % err.reason)
+		sys.exit(1)
+	except boto.exception.BotoServerError as err:
+		sys.stderr.write("BotoServerError: %s\n" % err.reason)
+		sys.exit(1)
+
+def optionParser():
+	usage = "usage: %prog [options] [KEY]\n\n"
+	usage += "Gets the given key from an s3 bucket.\n"
+
+	parser = OptionParser(usage=usage)
+	k.stdlib.logging.config.get_logging_options(parser)
+	k.aws.config.get_aws_options(parser)
+	k.aws.s3.get_s3_options(parser)
+	k.aws.config.get_file_option(parser, " ".join(["Download key, to",
+			"this specific file location."]))
+	k.aws.config.get_directory_option(parser, " ".join(["Download key(s), to",
+			"this directory, using the basename of the key as the filename."]))
+	k.aws.config.get_prefix_option(parser, "Download all keys with this prefix, [KEY] ignored")
+
+	return parser
+
+if __name__ == '__main__':
+	main()
+
+# Local Variables:
+# tab-width: 4
+# indent-tabs-mode: t
+# End:

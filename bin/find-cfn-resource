@@ -1,0 +1,88 @@
+#!/usr/bin/env python
+
+# For nagios, find the names of all of the ELBs in a billing account
+# so that nagios configurations can be built.
+#
+#
+# E.g.:
+# 644 pn@PN-mac 05:13 ~/dvcs/lib/python/k.aws $ time find-cfn-resource.py -e staging --forcefile --elb_stacks=QA-RecRec,QA-KPIP-Router,QA-MockOSB --resource_type=AWS::ElasticLoadBalancing::LoadBalancer
+# {
+#   "QA-MockOSB": [
+#     "QA-MockOS-ElasticL-QNKVOY0NBJPU"
+#   ], 
+#   "QA-RecRec": [
+#     "QA-RecRec-ElasticL-BJ6GR7H225NE"
+#   ], 
+#   "QA-KPIP-Router": [
+#     "QA-KPIP-R-ElasticL-1G5PICMNF9HGR"
+#   ]
+# }
+
+import os
+import logging
+import sys
+import boto
+import k.aws.config
+import k.aws.cfn
+import k.aws.elb
+import json
+import k.stdlib.logging.config
+from optparse import OptionParser
+
+def get_relevant_stack_map(options):
+	"""Get the relevant stacks, returns a mapping of the
+	stack name to the elb ID for the elb in that stack.
+	"""
+	conn   = k.aws.cfn.connect(options.creds)
+	stack_map = dict()
+	# full_stack_names = [ "{0}-{1}".format(options.cfn_env, s)
+	# 	for s in options.elb_stacks ]
+	for sn in options.elb_stacks:
+		stack_map[sn] = get_elb_resource_id_list(conn, options, sn)
+	return stack_map
+
+def get_elb_resource_id_list(conn, opts, stack_name):
+	"""Given a stack name, extract the load balancer(s)"""
+	return [ res.physical_resource_id for res in
+		conn.describe_stack_resources(stack_name)
+		if res.resource_type == opts.resource_type ]
+
+def get_elb_by_id(options, elb_resource_id):
+	conn = k.aws.elb.connect(options.creds)
+	return conn.get_all_load_balancers(load_balancer_names=[elb_resource_id])
+
+def optionParser():
+	usage = "usage: %prog [options] [key]\n\n"
+	usage += "Prints out variables needed to get a properly set up AWS env."
+	def comma_list_callback(option, opt, value, parser):
+		setattr(parser.values, option.dest, value.split(','))
+
+	parser = OptionParser(usage=usage)
+	k.stdlib.logging.config.get_logging_options(parser)
+	k.aws.config.get_aws_options(parser, rw=True)
+	parser.add_option("--stack_name", dest="stack_name",
+		help="The stack to be checked")
+	parser.add_option("--elb_stacks", dest="elb_stacks", action="callback",
+		type="string", callback=comma_list_callback,
+		help="Comma-separated stack names that use ELBs (e.g. RecRec, etc.)")
+	# parser.add_option("--cfn_env", dest="cfn_env",
+	# 	help="The CFN environment whose stacks we're interrogating")
+	parser.add_option("--resource_type", dest="resource_type",
+		help="The CFN resource type to match (e.g.'AWS::ElasticLoadBalancing::LoadBalancer')")
+	return parser
+
+def main():
+	parser = optionParser()
+	(options, args) = parser.parse_args()
+	k.stdlib.logging.config.configure_logging(options)
+	options.creds = k.aws.config.get_keys(options)
+	stack_map = get_relevant_stack_map(options)
+	print json.dumps(stack_map, indent=2)
+
+if __name__ == '__main__':
+	main()
+
+# Local Variables:
+# tab-width: 4
+# indent-tabs-mode: t
+# End:

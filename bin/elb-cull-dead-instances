@@ -1,0 +1,61 @@
+#!/usr/bin/env python
+
+# Given a list of ELB IDs on the command line, return a json document
+# with the mapping of ELB ID to the DNS name of the ELB
+
+import os
+import logging
+import os.path
+import sys
+import boto
+import k.aws.config
+import k.aws.elb
+import k.stdlib.logging.config
+from boto import exception
+from optparse import OptionParser
+import json
+
+def cull_dead_instances(conn, dry_run):
+	elbs = conn.get_all_load_balancers()
+	for elb in elbs:
+		instances = conn.describe_instance_health(elb.name)
+		remove = []
+		for instance in instances:
+			if instance.state == 'OutOfService':
+				print "%s: %s-%s" % (
+					elb.name, instance.instance_id, instance.state)
+				remove.append(instance.instance_id)
+		if not dry_run and len(remove) > 0:
+			elb.deregister_instances(remove)
+
+def main():
+	parser = optionParser()
+	(options, args) = parser.parse_args()
+	k.stdlib.logging.config.configure_logging(options)
+	try:
+		creds = k.aws.config.get_keys(options)
+		conn = k.aws.elb.connect(creds)
+		cull_dead_instances(conn, options.dry_run)
+	except boto.exception.BotoServerError, e:
+		sys.stderr.write(str(e))
+		sys.exit(1)
+
+def optionParser():
+	usage = "usage: %prog [options]\n\n"
+	usage += "Culls dead instances still assigned to an account's elbs"
+
+	parser = OptionParser(usage=usage)
+	k.stdlib.logging.config.get_logging_options(parser)
+	k.aws.config.get_aws_options(parser, rw=True)
+	parser.add_option(
+		"--dry-run", dest="dry_run", default=False, action='store_true',
+		help="Only work on autoscale groups containing [filter] in name")
+	return parser
+
+if __name__=='__main__':
+	main()
+
+# Local Variables:
+# tab-width: 4
+# indent-tabs-mode: t
+# End:

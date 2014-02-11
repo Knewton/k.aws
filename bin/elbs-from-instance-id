@@ -1,0 +1,49 @@
+#!/usr/bin/env python
+import os
+import logging
+import os.path
+import sys
+import boto
+import k.aws.config
+import k.aws.elb
+import k.stdlib.logging.config
+from boto import exception
+from optparse import OptionParser
+
+def get_elb_list(conn, instance_ids):
+	retset = set()
+	for elb in conn.get_all_load_balancers():
+		for elb_instance in elb.instances:
+			if elb_instance.id in instance_ids:
+				retset.add(elb)
+	for elb in retset:
+		print elb.name
+
+def main():
+	parser = optionParser()
+	(options, args) = parser.parse_args()
+	k.stdlib.logging.config.configure_logging(options)
+	try:
+		creds = k.aws.config.get_keys(options)
+		conn = k.aws.elb.connect(creds)
+		get_elb_list(conn, args)
+	except boto.exception.BotoServerError, e:
+		sys.stderr.write(str(e))
+		sys.exit(1)
+
+def optionParser():
+	usage = "usage: %prog [options] [instance-id]...\n\n"
+	usage += "Returns a list of all ELBs that have any passed in instance id registered"
+
+	parser = OptionParser(usage=usage)
+	k.stdlib.logging.config.get_logging_options(parser)
+	k.aws.config.get_aws_options(parser, rw=True)
+	return parser
+
+if __name__=='__main__':
+	main()
+
+# Local Variables:
+# tab-width: 4
+# indent-tabs-mode: t
+# End:

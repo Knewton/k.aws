@@ -1,0 +1,85 @@
+#!/usr/bin/env python
+import os
+import logging
+import sys
+import boto
+import k.aws.config
+import k.aws.s3
+import k.stdlib.logging.config
+from boto import exception
+from boto.s3.key import Key
+from optparse import OptionParser
+
+def test_buckets(creds, options, buckets):
+	sconn = None
+	oconn = None
+	for bucket in buckets:
+		conn = None
+		ordinary = options.ordinary
+		if not k.aws.s3.is_valid_dns_name(bucket):
+			ordinary = True
+		if ordinary:
+			if not oconn:
+				oconn = k.aws.s3.connect(creds, ordinary=True)
+			conn = oconn
+		else:
+			if not sconn:
+				sconn = k.aws.s3.connect(creds)
+			conn = sconn
+		exists = k.aws.s3.check_bucket(conn, bucket, False)
+		if exists and not options.ignore:
+			sys.stderr.write("%s Already Exists\n" % bname)
+			sys.exit(1)
+	return sconn, oconn
+
+def create_buckets(creds, options, buckets):
+	sconn, oconn = test_buckets(creds, options, buckets)
+
+	for bucket in buckets:
+		conn = None
+		ordinary = options.ordinary
+		if not k.aws.s3.is_valid_dns_name(bucket):
+			ordinary = True
+		if ordinary:
+			conn = oconn
+		else:
+			conn = sconn
+		if options.verbose:
+			print "%s" % (bucket)
+		k.aws.s3.create_bucket(conn, bucket, options.region)
+
+def main():
+	parser = optionParser()
+	(options, args) = parser.parse_args()
+	k.stdlib.logging.config.configure_logging(options)
+
+	creds = k.aws.config.get_keys(options)
+	buckets = []
+	if options.bucket:
+		buckets.append(options.bucket)
+	buckets.extend(args)
+	create_buckets(creds, options, buckets)
+
+def optionParser():
+	usage = "usage: %prog [options] [bucket name(s)]\n\n"
+	usage += "Creates the buckets passed in as args"
+
+	parser = OptionParser(usage=usage)
+	k.stdlib.logging.config.get_logging_options(parser)
+	k.aws.config.get_aws_options(parser, rw=True)
+	k.aws.config.get_region_option(parser)
+	k.aws.config.get_verbose_option(parser)
+	k.aws.s3.get_s3_options(parser)
+	parser.add_option(
+		"-i", "--ignore", dest="ignore", action="store_true", default=False,
+		help="If the bucket already exists, exit without error")
+
+	return parser
+
+if __name__=='__main__':
+	main()
+
+# Local Variables:
+# tab-width: 4
+# indent-tabs-mode: t
+# End:

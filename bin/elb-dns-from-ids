@@ -1,0 +1,51 @@
+#!/usr/bin/env python
+
+# Given a list of ELB IDs on the command line, return a json document
+# with the mapping of ELB ID to the DNS name of the ELB
+
+import os
+import logging
+import os.path
+import sys
+import boto
+import k.aws.config
+import k.aws.elb
+import k.stdlib.logging.config
+from boto import exception
+from optparse import OptionParser
+import json
+
+def get_elb_map(conn, elb_id_list):
+	mapping = dict()
+	for elb in conn.get_all_load_balancers(elb_id_list):
+		mapping[elb.name] = elb.dns_name
+	return mapping
+
+def main():
+	parser = optionParser()
+	(options, args) = parser.parse_args()
+	k.stdlib.logging.config.configure_logging(options)
+	try:
+		creds = k.aws.config.get_keys(options)
+		conn = k.aws.elb.connect(creds)
+		print json.dumps(get_elb_map(conn, args), indent=2)
+	except boto.exception.BotoServerError, e:
+		sys.stderr.write(str(e))
+		sys.exit(1)
+
+def optionParser():
+	usage = "usage: %prog [options] [elb-id]...\n\n"
+	usage += "Returns the dns name of an ELB based on its ELB ID"
+
+	parser = OptionParser(usage=usage)
+	k.stdlib.logging.config.get_logging_options(parser)
+	k.aws.config.get_aws_options(parser, rw=True)
+	return parser
+
+if __name__=='__main__':
+	main()
+
+# Local Variables:
+# tab-width: 4
+# indent-tabs-mode: t
+# End:

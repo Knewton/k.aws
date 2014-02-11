@@ -1,0 +1,61 @@
+#!/usr/bin/env python
+import sys
+import boto
+import k.aws.config
+import k.aws.s3
+import k.stdlib.logging.config
+from optparse import OptionParser
+
+def copy(bucket, old_key, new_key):
+	if old_key == new_key:
+		sys.stderr.write("ERROR: %s: old_key and new_key are the same\n" % old_key)
+		sys.exit(1)
+	if bucket.get_key(new_key):
+		sys.stderr.write("ERROR: %s: exists, delete before copying\n" % new_key)
+		sys.exit(1)
+	key = bucket.get_key(old_key)
+	if not key:
+		sys.stderr.write("ERROR: %s: does not exist\n" % old_key)
+		sys.exit(1)
+	key.copy(bucket.name, new_key)
+
+def main():
+	parser = optionParser()
+	(options, args) = parser.parse_args()
+	k.stdlib.logging.config.configure_logging(options)
+
+	if not len(args) == 2:
+		sys.stderr.write("[old key] [new key] required\n")
+		sys.exit(1)
+	try:
+		creds = k.aws.config.get_keys(options)
+		bucket_name = k.aws.s3.get_bucket_name(options)
+		conn = k.aws.s3.connect(
+			creds, bucket_name=bucket_name, ordinary=options.ordinary)
+		bucket = k.aws.s3.get_bucket(conn, options)
+		old_key = args[0]
+		new_key = args[1]
+		copy(bucket, old_key, new_key)
+	except boto.exception.BotoServerError, e:
+		sys.stderr.write(e.message + "\n")
+		sys.exit(1)
+
+def optionParser():
+	usage = ''.join([
+		"usage: %prog [options] [old key] [new key]\n\n",
+		"Copies a key to a new name in the same bucket"])
+
+	parser = OptionParser(usage=usage)
+	k.stdlib.logging.config.get_logging_options(parser)
+	k.aws.config.get_aws_options(parser)
+	k.aws.config.get_verbose_option(parser)
+	k.aws.s3.get_s3_options(parser)
+	return parser
+
+if __name__=='__main__':
+	main()
+
+# Local Variables:
+# tab-width: 4
+# indent-tabs-mode: t
+# End:

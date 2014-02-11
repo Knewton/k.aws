@@ -1,0 +1,83 @@
+#!/usr/bin/env python
+import os
+import logging
+import sys
+import boto
+import k.aws.config
+import k.aws.s3
+import k.stdlib.logging.config
+from boto import exception
+from boto.s3.connection import S3Connection
+from boto.s3.key import Key
+from optparse import OptionParser
+
+def dry_run(creds, options):
+	sys.stderr.write("DRY RUN\n")
+	bucket_name = k.aws.s3.get_bucket_name(options)
+	conn = k.aws.s3.connect(
+		creds, bucket_name=bucket_name, ordinary=options.ordinary)
+	bucket = k.aws.s3.get_bucket(conn, options)
+	keys = bucket.list()
+	for key in keys:
+		print key.name
+	print "bucket:%s" % bucket_name
+
+def destroy_bucket(creds, options):
+	threads = int(options.threads)
+	if threads < 2:
+		sys.stderr.write('Threads must be greater then 1\n')
+		sys.exit(1)
+	timeout = int(options.timeout)
+	bucket_name = k.aws.s3.get_bucket_name(options)
+	k.aws.s3.parallel_delete_bucket(creds, bucket_name,
+		ordinary=options.ordinary, threads=threads,
+		timeout=timeout, verbose=options.verbose)
+	conn = k.aws.s3.connect(
+		creds, bucket_name=bucket_name, ordinary=options.ordinary)
+	k.aws.s3.delete_bucket(conn, bucket_name)
+	print "bucket:%s" % bucket_name
+
+def main():
+	parser = optionParser()
+	(options, args) = parser.parse_args()
+	k.stdlib.logging.config.configure_logging(options)
+
+	try:
+		creds = k.aws.config.get_keys(options)
+		if not options.force:
+			dry_run(creds, options)
+		else:
+			destroy_bucket(creds, options)
+	except boto.exception.BotoServerError, e:
+		sys.stderr.write(str(e))
+		sys.exit(1)
+
+def optionParser():
+	usage = "usage: %prog [options] [key]\n\n"
+	usage += "Deletes all keys in a bucket and then the bucket.\n"
+	usage += "Does a dry run unless you use -f"
+
+	parser = OptionParser(usage=usage)
+	k.stdlib.logging.config.get_logging_options(parser)
+	k.aws.config.get_aws_options(parser, rw=True)
+	k.aws.config.get_verbose_option(parser)
+	k.aws.s3.get_s3_options(parser)
+	parser.add_option(
+		"-t", "--threads", default="10", dest="threads",
+		help="Threads (default: 10)")
+	parser.add_option(
+		"-T", "--timeout", default="300", dest="timeout",
+		help="Key copy timeout (default: 300)")
+	parser.add_option(
+		"-f", "--force", dest="force", action="store_true", default=False,
+		help="Force")
+
+	return parser
+
+if __name__=='__main__':
+	main()
+
+# Local Variables:
+# tab-width: 4
+# indent-tabs-mode: t
+# End:

@@ -1,0 +1,309 @@
+#!/usr/bin/env python
+
+"""s3-describe-bucket -e <knewton environment> -b <bucket> [-p <prefix>] [optional params]
+
+The -e and -b flags are required and are the standard k.aws.s3
+options.  Use "pydoc k.aws.s3" to find out more about these options
+(no, seriously.  This should be fixed so that these options can be
+gotten via pydoc).
+
+The optional parameters allow you to specify the source and destination
+buckets, and prefix patterns for keys.
+
+In the future more flexible searching could be considered.  By default
+S3 provides prefixes you can filter on and which make listings far
+faster.  More complex searches would involve returning larger sets of
+keys, and they would need to be filtered on the client side, which could
+be explored in future work.
+
+Currently what this does is:
+
+ * Get each key in the provided bucket.
+ * If provided with the "prefix" argument, only summarize those keys
+ * generate json with the size of each key.
+ * summarize the size of the keys listed in the bucket.
+
+The generated json document will look like this:
+
+{
+  "s3-describe-bucket" : {
+    "bucket-name" : "name of the bucket",
+    "prefix" : "prefix if one was requested",
+    "keys" : {
+      "key1": "size1 <size in kbytes>"
+    }
+    "total-size" : "total size in kbytes (1024 bytes)",
+    "total-size-mb" : "total size in MB (1024 kbytes)",
+    "total-size-gb" : "total size in GB (1024 Mbytes)",
+  }
+}
+
+OPTIONS:
+
+-b|--bucket=Source S3 Bucket (will appear in diffs as the "-" prefix)
+
+-p|--prefix=Source S3 bucket prefix
+
+EXAMPLES:
+
+To compare cassandra backups from the "monthly" prefix to one of the
+"backup" prefix, for a particular token in the cluster on a particular
+day and time, you can do this:
+
+  ./s3-describe-bucket -B biggie-prod-cassandra \
+    -b biggie-prod-cassandra \
+    -p monthly/us-east-1/Biggie-Cassandra/113427455640312821154458202479064646084/201211010338 \
+    -e utility
+
+Maybe to be done in the future, based on need:
+
+Add more information about the bucket to the json:
+- Any lifecycle policies
+- ACLs
+- Bucket permissions/policies
+- ARN of the bucket
+- Canonical S3 ID of the user running the report
+"""
+
+import os
+import logging
+import sys
+import difflib
+import k.stdlib.logging.config
+from collections import namedtuple
+import functools
+import simplejson as json
+import boto
+from boto import exception
+from boto.s3.key import Key
+from boto.s3.bucket import Bucket
+from optparse import OptionParser
+import k.aws.config
+import k.aws.s3
+import k.aws.util
+from blessings import Terminal
+
+
+# Constants - sizes in powers of 2
+KB=2**10
+MB=2**20
+GB=2**30
+
+
+def _get_bucket_list_with_retry(creds, bucket_name, is_ordinary, prefix=None, retry_count=5):
+	"""Iterator that yields all keys, with a retry in case of an error.
+	The amazon interface presents a "marker" object to continue.
+
+	:type conn: boto.iam.connection object
+	:param conn: object as returned by connect()
+
+	:type bucket_name: String
+	:param bucket_name: Name of the bucket to be listed
+
+	:type is_ordinary: Boolean
+	:param is_ordinary: Whether the ordinary calling format will be used (see s3 docs)
+
+	:type prefix: String
+	:param prefix: A prefix for keys to be listed
+
+	:type retry_count: Integer
+	:param retry_count: Number of times to retry any failed call
+	"""
+	conn = k.aws.s3.connect(
+		creds, bucket_name=bucket_name, ordinary=is_ordinary)
+	bucket = conn.get_bucket(bucket_name)
+
+	retry_seq = range(retry_count)
+	if retry_count > 3:
+		retry_seq = retry_seq + [ (bo + 1) * 5 for bo in range(retry_count - 3) ]
+	def data_lookup(response):
+		return response
+	def marker_lookup(response):
+		if response.next_token:
+			return response.next_token
+		else:
+			raise KeyError, "no next_token"
+	def get_all_keys_with_retry(**kwargs):
+		for count in range(retry_count):
+			try:
+				return bucket.list(**kwargs)
+			except TypeError as te:
+				# this seems to happen in large/long lists
+				# TypeError is what we're trying to re-try
+				print str(te)
+				print "Sleeping"
+				time.sleep(retry_seq[count])
+				continue
+	return k.aws.util.yield_aws_data(get_all_keys_with_retry, 'next_token', marker_lookup, data_lookup)
+
+
+def _get_bucket_list(creds, bucket_name, is_ordinary, prefix=None):
+	conn = k.aws.s3.connect(
+		creds, bucket_name=bucket_name, ordinary=is_ordinary)
+	bucket = conn.get_bucket(bucket_name)
+	if prefix:
+		return bucket.list(prefix)
+	else:
+		return bucket.list()
+
+
+def yield_and_print_info(creds, src_bucket_name, src_prefix=None, src_ordinary=False):
+	"""
+	Given a bucket, yield each key in the bucket as a namedtuple of <key name>: <size in KB>
+
+	creds: a set of creds that can be used by k.aws.s3.connect. These creds must be able to connect to both buckets.
+	src_bucket_name: string, name of the bucket to be considered the "source"
+	src_prefix: string or None, whether a prefix should be used to filter keys to be compared in the source
+	src_ordinary: boolean, whether the "ordinary" format will be used (only valid in us-east-1)
+
+	This function will print some summary info to the screen as it works.
+
+	"""
+	def format_size(size_in_bytes, kb_threshold=10, mb_threshold=10, gb_threshold=10):
+		total_kb,total_mb,total_gb = byte_conversions(size_in_bytes)
+		total_size = "{0} B".format(size_in_bytes)
+		total_kb, total_mb, total_gb = byte_conversions(size_in_bytes)
+		if total_kb > kb_threshold:
+			total_size = "{0} KB".format(total_kb)
+		if total_mb > mb_threshold:
+			total_size = "{0:0.2f} MB".format(total_mb)
+		if total_gb > gb_threshold:
+			total_size = "{0:0.2f} GB".format(total_gb)
+		return total_size
+
+	key_info = namedtuple('key_info', ['name', 'size'])
+	try:
+		# src = _get_bucket_list(creds, src_bucket_name, src_ordinary, src_prefix)
+		src = _get_bucket_list_with_retry(creds, src_bucket_name, src_ordinary, src_prefix)
+	except Exception as e:
+		sys.stderr.write("Error connecting to src {0} because {1}".format(src_bucket_name, str(e)))
+		raise
+	# This part is going to be the majority of the time that is spent
+	# in the program, that is when it waits on results from the s3
+	# API, so I'm going to do the listification here.
+	term = Terminal()
+	total_size_bytes = 0
+	total_key_count = 0
+	print(term.clear())
+	try:
+		for k in src:
+			this_key = key_info(k.name, k.size)
+
+			with term.location(x=0, y=2):
+				total_key_count += 1
+				total_size_bytes += this_key.size
+				total_size = format_size(total_size_bytes)
+				key_size = format_size(this_key.size)
+
+				print(term.clear_eol() + "Total: {0} ({1} keys): {2}".format(src_bucket_name, total_key_count, total_size))
+				# print
+				print(term.clear_eol() + u"{0}: {1}".format(this_key.name, key_size))
+				print(term.clear_eol())
+			yield this_key
+	except TypeError as te:
+		sys.stderr.write("Error on bucket {0}\n".format(src_bucket_name))
+		sys.stderr.write("bad key, trying the next one")
+		next
+
+	total_size = format_size(total_size_bytes)
+	print(term.move_down() + term.move_down() + term.move_down() + term.move_down() + "Done: {0}: {1}".format(src_bucket_name, total_size))
+
+
+def option_parser():
+	usage = ''.join([
+		"usage: %prog [options] [prefix]\n\n",
+		"Copies compares keys under bucket/<prefix> in one s3 bucket to",
+		"bucket2/<prefix> in the same or another s3 bucket."])
+
+	parser = OptionParser(usage=usage)
+	k.stdlib.logging.config.get_logging_options(parser)
+	k.aws.config.get_aws_options(parser)
+	parser.add_option(
+		"-o", dest="ordinary", default=False, action="store_true",
+		help="Use Ordinary Calling Format (source bucket).")
+	parser.add_option(
+		"-b", "--bucket", dest="bucket",
+		help="Source S3 Bucket Name")
+	parser.add_option(
+		"-p", "--prefix", dest="prefix", default="",
+		help="Source prefix for key names")
+	parser.add_option("-w", "--write-to-file", dest="write_to_file",
+		default=None, help="Name of the json file where output will be written")
+	return parser
+
+def write_output(s3_generator, opts):
+	total_kb  = 0
+	key_count = 0
+	with open(opts.write_to_file, 'w') as output_file:
+		output_file.write("""{{
+  "s3-describe-bucket" : {{
+    "bucket-name" : "{0}",
+    "prefix"      : "{1}",
+    "keys"        : {{
+""".format(opts.bucket, opts.prefix))
+		for key in s3_generator:
+			output_file.write('      "{0}" : {1},\n'.format(key.name, key.size))
+			total_kb += key.size
+			key_count += 1
+		output_file.write(final_output(total_kb, key_count))
+
+def byte_conversions(total_bytes):
+	kb = float(total_bytes) / KB
+	mb = float(total_bytes) / MB
+	gb = float(total_bytes) / GB
+	return kb, mb, gb
+
+
+def final_output(total_bytes, key_count):
+	total_kb,total_mb,total_gb = byte_conversions(total_bytes)
+	# Add an empty line with a zero to terminate this as a valid JSON
+	# object syntacticly.
+	output = """
+	"", 0
+    }}
+    "total-size"     : {0},
+    "total-size-mb"  : {1},
+    "total-size-gb"  : {2},
+    "total-key-count": {3}
+}}""".format(total_kb, total_mb, total_gb, key_count)
+	return output
+
+
+
+
+def save_output(s3_info, destination_file, format='json'):
+	with open(destination_file, 'w') as outfile:
+		json.dump(s3_info, outfile, sort_keys = True, indent = 2, encoding='utf-8')
+
+def main():
+	parser = option_parser()
+	(opts, args) = parser.parse_args()
+	k.stdlib.logging.config.configure_logging(options)
+	if opts.write_to_file is None:
+		opts.write_to_file = opts.bucket + ".json"
+
+	try:
+		creds = k.aws.config.get_keys(opts)
+		generated_key_list = yield_and_print_info(creds, opts.bucket, opts.prefix, opts.ordinary)
+		# save_output(build_output(generated_key_list, opts), opts.write_to_file)
+		write_output(generated_key_list, opts)
+	except boto.exception.BotoServerError as be:
+		sys.stderr.write(str(be) + "\n")
+		sys.exit(1)
+	except ValueError as ve:
+		sys.stderr.write(str(ve) + "\n")
+		# Exit normally, this isn't an error'
+		sys.exit(0)
+	except IOError as ioe:
+		if "Broken pipe" in str(ioe): # Ignore a broken pipe
+			pass
+		else:
+			raise ioe
+
+if __name__ == '__main__':
+	main()
+
+# Local Variables:
+# tab-width: 4
+# indent-tabs-mode: t
+# End:

@@ -1,0 +1,86 @@
+#!/usr/bin/env python
+import boto
+import logging
+import os
+import k.aws.config
+import k.aws.ec2
+import k.stdlib.logging.config
+from optparse import OptionParser
+
+__version__ = "$Revision: 0 $"
+
+def output(reservation, instance, options):
+	values = []
+	if (options.show_id):
+		values.append(instance.id)
+	if (options.show_launch_time):
+		values.append(instance.launch_time)
+	if (options.show_public_dns_name):
+		values.append(instance.public_dns_name)
+	if (options.show_security_groups):
+		security_groups = [
+			get_group_name(group).lower() for group in reservation.groups]
+		security_groups = ", ".join(security_groups)
+		values.append(security_groups)
+	if (values != []):
+		print "\t".join(values)
+
+def get_group_name(group):
+	try:
+		return group.name
+	except:
+		return group.id
+
+def list_instances(conn, options):
+	reservations = conn.get_all_instances()
+	data = {}
+
+	group_name = None
+	if options.group:
+		group_name = unicode(options.group)
+	for reservation in reservations:
+		security_groups = [
+			get_group_name(group).lower() for group in reservation.groups]
+		if (group_name is not None and group_name not in security_groups):
+			continue
+		key = ", ".join(security_groups)
+		for instance in reservation.instances:
+			if (u"running" == instance.state):
+				output(reservation, instance, options)
+
+def main():
+	parser = option_parser()
+	(options, args) = parser.parse_args()
+	k.stdlib.logging.config.configure_logging(options)
+	if (options.default_options):
+		options.show_id = True
+		options.show_launch_time=True
+		options.show_public_dns_name=True
+		options.show_security_groups=True
+	creds = k.aws.config.get_keys(options)
+	conn = k.aws.ec2.connect(creds)
+	list_instances(conn, options)
+
+def option_parser():
+	usage = "usage: %prog [options]"
+	version = "%prog (" + __version__ + ")"
+	description = "Lists active EC2 instances."
+	parser = OptionParser(usage=usage, version=version, description=description)
+	k.stdlib.logging.config.get_logging_options(parser)
+	k.aws.config.get_aws_options(parser)
+	parser.add_option("-g", "--group", dest="group", help="filter instance list by GROUP", metavar="GROUP")
+	parser.add_option("--show-id", action="store_true", dest="show_id", help="show the instance id")
+	parser.add_option("--show-launch-time", action="store_true", dest="show_launch_time", help="show the instance launch time")
+	parser.add_option("--show-public-dns-name", action="store_true", dest="show_public_dns_name", help="show the instance public dns name")
+	parser.add_option("--show-security-groups", action="store_true", dest="show_security_groups", help="show the reservation security groups")
+	parser.add_option("-z", "--default-options", action="store_true", dest="default_options", help="show id, launch time, public dns name, and security groups")
+	parser.set_defaults(show_id=False, show_launch_time=False, show_public_dns_name=False, show_security_groups=False, default_options=False)
+	return parser
+
+if (__name__ == "__main__"):
+	main()
+
+# Local Variables:
+# tab-width: 4
+# indent-tabs-mode: t
+# End:

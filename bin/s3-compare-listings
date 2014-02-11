@@ -1,0 +1,236 @@
+#!/usr/bin/env python
+
+"""s3-compare-listings -e <knewton environment> -b <bucket> [optional params]
+
+The -e and -b flags are required and are the standard k.aws.s3
+options.  Use "pydoc k.aws.s3" to find out more about these options
+(no, seriously.  This should be fixed so that these options can be
+gotten via pydoc).
+
+The optional parameters allow you to specify the source and destination
+buckets, and prefix patterns for keys.  
+
+In the future more flexible searching could be considered.  By default
+S3 provides prefixes you can filter on and which make listings far
+faster.  More complex searches would involve returning larger sets of
+keys, and they would need to be filtered on the client side, which could
+be explored in future work.
+
+What this does is:
+
+ * Get the list of keys that match the "prefix" argument in the "source" bucket
+ * Get the list of keys that match the "prefix2" argument in the "target" bucket
+
+This will then sort both lists of keys so that they can be compared.
+Output will be provided in a unified-diff-like format by default, but
+a context-diff-like format and an ndiff format (which provides
+information about the characters that are different, not just the
+lines) can be requested as well.  The diffing is done by the python
+"difflib" module.
+
+OPTIONS: 
+
+-D|--diff-style=<unified|context|ndiff> "unified is the default"
+
+-b|--bucket=Source S3 Bucket (will appear in diffs as the "-" prefix)
+
+-B|--bucket2=Target S3 Bucket (will appear in diffs as the "+" prefix)
+
+-p|--prefix=Source S3 bucket prefix 
+
+-P|--prefix=Target S3 Bucket prefix
+
+EXAMPLES:
+
+To compare cassandra backups from the "monthly" prefix to one of the
+"backup" prefix, for a particular token in the cluster on a particular
+day and time, you can do this:
+
+  ./s3-compare-listings -B biggie-prod-cassandra \
+    -b biggie-prod-cassandra \
+    -p monthly/us-east-1/Biggie-Cassandra/113427455640312821154458202479064646084/201211010338 \
+    -P backup/us-east-1/Biggie-Cassandra/113427455640312821154458202479064646084/201211010338 \
+    -e utility
+
+This will use some default values, e.g. returning any output in a unified-diff format to stdout.
+
+BUGS/TODO:
+
+Add reporting to graphite to this, or make an output form that is
+convenient for doing such reporting (e.g. a "count the number of
+differing lines" mode).
+
+"""
+
+import os
+import logging
+import sys
+import difflib
+import k.stdlib.logging.config
+from collections import namedtuple
+import boto
+from boto import exception
+from boto.s3.key import Key
+from boto.s3.bucket import Bucket
+from optparse import OptionParser
+import k.aws.config
+import k.aws.s3
+
+
+
+def _get_bucket_list(creds, bucket_name, is_ordinary, prefix=None):
+	conn = k.aws.s3.connect(
+		creds, bucket_name=bucket_name, ordinary=is_ordinary)
+	bucket = conn.get_bucket(bucket_name)
+	if prefix:
+		return bucket.list(prefix)
+	else:
+		return bucket.list()
+
+
+def compare_keys_in_prefix(creds, src_bucket_name, dst_bucket_name,
+		src_ordinary=False, dst_ordinary=False,
+		src_prefix=None, dst_prefix=None, diff_style='unified',
+		verbose=False):
+	"""
+	Compare the contents of 2 buckets (or the same bucket,
+	specified twice), optionally using a set of prefixes to reduce
+	the list of keys that will be compared.
+	
+	If a src_prefix of "foo" and a dst_prefix of "bar" are
+	provided, then the source key "foo/some_key" will be
+	considered equal to a key on the destination side called
+	"bar/some_key".
+	
+	creds: a set of creds that can be used by k.aws.s3.connect. These creds must be able to connect to both buckets.
+	src_bucket_name: string, name of the bucket to be considered the "source"
+	dst_bucket_name: string, name of the bucket to be considered the "destination" 
+	src_ordinary: boolean, whether the "ordinary" format will be used (only valid in us-east-1)
+	dst_ordinary: boolean, whether the "ordinary" format will be used (only valid in us-east-1)
+	src_prefix: string or None, whether a prefix should be used to filter keys to be compared in the source
+	dst_prefix: string or None: whether a prefix should be used to filter keys to be compared in the destination
+	diff_style: string, "unified", "context", or "ndiff"
+	verbose: boolean, will print extra junk to stdout
+	"""
+	def list_of_key_name_and_size(k_info, strip_prefix=None):
+		"""Given a key_info namedtuple, return a sorted list that
+		contains the flattened list of key name, a whitespace, and the
+		size of the key.  If strip_prefix is not None, then that prefix will be stripped
+		off for the purposes of diffing and for printing"""
+		if strip_prefix is None:
+			return sorted([ "{0.name} {0.size}".format(k) for k in k_info ])
+		else:
+			return sorted([ "{0} {1}".format(k.name.lstrip(strip_prefix), k.size) for k in k_info ])
+	def compare_diff():
+		"""
+		If the diff style is ndiff, don't use bucket names, it doesn't
+		accept source and destination filenames as arguments for
+		printable output.
+		"""
+		if diff_style == "ndiff":
+			return difflib.ndiff(list_of_key_name_and_size(src_list, src_prefix),
+				list_of_key_name_and_size(dst_list, dst_prefix))
+		if diff_style == 'unified':
+			diff_function = difflib.unified_diff
+		elif diff_style == 'context':
+			diff_function = difflib.context_diff
+		else:
+			raise ValueError, "Please provide one of 'unified', 'context', or 'ndiff' as a diff style"
+		return diff_function(list_of_key_name_and_size(src_list, src_prefix),
+			list_of_key_name_and_size(dst_list, dst_prefix),
+			"{0}:{1}".format(src_bucket_name, src_prefix), "{0}:{1}".format(dst_bucket_name, dst_prefix))
+
+	key_info = namedtuple('key_info', ['name', 'size'])
+	try:
+		src = list(_get_bucket_list(creds, src_bucket_name, src_ordinary, src_prefix))
+	except Exception as e:
+		sys.stderr.write("Error connecting to src {0} because {1}".format(src_bucket_name, str(e)))
+		raise
+
+	try:
+		dst = _get_bucket_list(creds, dst_bucket_name, dst_ordinary, dst_prefix)
+	except Exception as e:
+		sys.stderr.write("Error connecting to src {0} because {1}".format(dst_bucket_name, str(e)))
+		raise
+
+	# This part is going to be the majority of the time that is spent
+	# in the program, that is when it waits on results from the s3
+	# API, so I'm going to do the listification here.
+	src_list = ( key_info(k.name, k.size) for k in src )
+	dst_list = ( key_info(k.name, k.size) for k in dst )
+
+	return compare_diff()
+
+def option_parser():
+	usage = ''.join([
+		"usage: %prog [options] [prefix]\n\n",
+		"Copies compares keys under bucket/<prefix> in one s3 bucket to",
+		"bucket2/<prefix> in the same or another s3 bucket."])
+
+	parser = OptionParser(usage=usage)
+	k.stdlib.logging.config.get_logging_options(parser)
+	k.aws.config.get_aws_options(parser)
+	k.aws.config.get_verbose_option(parser)
+	parser.add_option(
+		"-o", dest="ordinary", default=False, action="store_true",
+		help="Use Ordinary Calling Format (source bucket).")
+	parser.add_option(
+		"-O", dest="ordinary2", default=False, action="store_true",
+		help="Use Ordinary Calling Format (Target bucket).")
+	parser.add_option(
+		"-b", "--bucket", dest="bucket",
+		help="Source S3 Bucket Name")
+	parser.add_option(
+		"-B", "--bucket2", dest="bucket2",
+		help="Target S3 Bucket Name")
+	parser.add_option(
+		"-p", "--prefix", dest="prefix", default="",
+		help="Source prefix for key names")
+	parser.add_option(
+		"-P", "--prefix2", dest="prefix2", default="",
+		help="Destination prefix for key names")
+	parser.add_option(
+		"-D", "--diff-style", dest='diff_style', default='unified')
+	return parser
+
+
+def main():
+	parser = option_parser()
+	(opts, args) = parser.parse_args()
+	k.stdlib.logging.config.configure_logging(options)
+
+	try:
+		creds = k.aws.config.get_keys(opts)
+		generated = compare_keys_in_prefix(creds, opts.bucket, opts.bucket2,
+			opts.ordinary, opts.ordinary2, opts.prefix, opts.prefix2,
+			opts.diff_style, opts.verbose)
+		different_lines = 0
+		for line in generated:
+			different_lines += 1
+			print line
+		if different_lines > 0:
+			print "{0} lines different".format(different_lines)
+			return 1
+		else:
+			return 0
+	except boto.exception.BotoServerError as be:
+		sys.stderr.write(str(be) + "\n")
+		sys.exit(1)
+	except ValueError as ve:
+		sys.stderr.write(str(ve) + "\n")
+		# Exit normally, this isn't an error'
+		sys.exit(0)
+	except IOError as ioe:
+		if "Broken pipe" in str(ioe): # Ignore a broken pipe
+			pass
+		else:
+			raise ioe
+
+if __name__ == '__main__':
+	main()
+
+
+# Local Variables:
+# indent-tabs-mode: 1
+# tab-width: 4
+# End:

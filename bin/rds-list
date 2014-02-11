@@ -1,0 +1,41 @@
+#!/usr/bin/env python
+import os
+import logging
+import sys
+import k.aws.config
+import k.aws.rds
+import k.stdlib.logging.config
+from optparse import OptionParser
+
+def list_dbs(conn):
+	rs = conn.get_all_dbinstances()
+	while True:
+		for rds in rs:
+			print rds.id
+		if rs.next_token:
+			rs = conn.get_all_dbinstances(next_token=rs.next_token)
+		else:
+			return
+
+def main():
+	parser = optionParser()
+	(options, args) = parser.parse_args()
+	k.stdlib.logging.config.configure_logging(options)
+
+	rcreds = k.aws.config.get_region_keys(options)
+	conn = k.aws.rds.connect(rcreds)
+	list_dbs(conn)
+
+def optionParser():
+	usage = "usage: %prog [options]\n\n"
+	usage += "Lists all rds instances"
+
+	parser = OptionParser(usage=usage)
+	k.stdlib.logging.config.get_logging_options(parser)
+	k.aws.config.get_aws_options(parser)
+	k.aws.config.get_region_option(parser)
+
+	return parser
+
+if __name__=='__main__':
+	main()

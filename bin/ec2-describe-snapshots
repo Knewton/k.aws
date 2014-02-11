@@ -1,0 +1,183 @@
+#!/usr/bin/env python
+"""
+List and describe previously created snapshots and snapshots for which
+you have CreateVolume permissions. The SNAPSHOT parameters, if specified,
+list specific snapshot(s) to be described.
+  If no parameters are specified, all snapshots owned by you or
+explicitely shared with you, are described.
+  With parameters, the result set is the intersection of the snapshots
+explicitely named, the snapshots owned by the specified owner(s), and
+the snapshots with CreateVolume permissions as specified.
+Examples:
+  -o        -r              returns
+ ----------+---------------+--------------------------------------------
+  self      self or <null>  only your snapshots
+  self      all             snapshots you have shared publicly
+  self      <userid>        snapshots you have shared with <userid>
+  <userid>  self            snapshots <userid> has shared with you
+  <userid>  all             snapshots <userid> has shared publicly
+  <userid>  <null>          snapshots <userid> has shared publicly
+                              or with you
+  <null>    self            your snapshots and snapshots any other user
+                              has shared with you
+  <null>    all             all public snapshots
+  <null>    <null>          your snapshots, public snapshots, and
+                              any other snapshots shared with you
+"""
+
+import boto
+import csv
+import json
+import k.aws.config
+import k.aws.ec2
+import k.stdlib.logging.config
+import sys
+from collections import OrderedDict
+from optparse import OptionParser
+
+__version__ = "$Revision: 0 $"
+
+def output_json(snapshots):
+	results = []
+	for snapshot in snapshots:
+		result = {
+			"snapshot-id": snapshot.id,
+			"volume-id": snapshot.volume_id,
+			"status": snapshot.status, 
+			"start-time": snapshot.start_time,
+			"progress": snapshot.progress,
+			"owner-id": snapshot.owner_id,
+			"volume-size": snapshot.volume_size,
+			"description": snapshot.description,
+			"tags": snapshot.tags,
+		}
+		results.append(result)
+
+	print json.dumps(results, indent=1)
+
+def output_tsv(snapshots):
+	results = []
+	for snapshot in snapshots:
+		result = OrderedDict([
+			("snapshot-id", snapshot.id),
+			("volume-id", snapshot.volume_id),
+			("status", snapshot.status), 
+			("start-time", snapshot.start_time),
+			("progress", snapshot.progress),
+			("owner-id", snapshot.owner_id),
+			("volume-size", snapshot.volume_size),
+			("description", snapshot.description),
+			#("tags", ";".join(["{0}={1}".format(k, v) for (k, v) in snapshot.tags.iteritems()])),
+		])
+		results.append(result)
+
+	#field_names = ["snapshot-id", "volume-id", "status", "start-time", "progress", "owner-id", "volume-size",
+	#		"description", "tags"]
+	field_names = ["snapshot-id", "volume-id", "status", "start-time", "progress", "owner-id", "volume-size",
+			"description"]
+	writer = csv.DictWriter(sys.stdout, field_names, delimiter="\t")
+	writer.writeheader()
+	writer.writerows(results)
+
+def output(output_format, snapshots):
+	globals()["output_{0}".format(output_format)](snapshots)
+
+def describe_snapshots(conn, opts, snapshot_ids):
+	snapshots = conn.get_all_snapshots(snapshot_ids, opts.owner, opts.restorable_by, opts.filters)
+	output(opts.format, snapshots)
+
+def main():
+	parser = option_parser()
+	(opts, args) = parser.parse_args()
+
+	if opts.all and args:
+		parser.errro("You cannot specify both all and snapshot IDs.")
+
+	for arg in args:
+		if not arg.startswith("snap-"):
+			parser.error("Snapshot IDs must begin with 'snap-'.")
+
+	if not args:
+		args = None
+
+	if opts.all and opts.owner:
+		parser.error("You cannot specify both all and owner.")
+
+	if opts.all and opts.restorable_by:
+		parser.error("You cannot specify both all and user.")
+
+	k.stdlib.logging.config.configure_logging(opts)
+	creds = k.aws.config.get_keys(opts)
+	conn = k.aws.ec2.connect(creds)
+	describe_snapshots(conn, opts, args)
+
+def add_filter(option, opt_str, value, parser, *args, **kwargs):
+	"""
+	Per http://docs.aws.amazon.com/AWSEC2/latest/APIReference/ApiReference-query-DescribeSnapshots.html,
+	the available filters are:
+	* description
+	* owner-alias
+	* owner-id
+	* progress
+	* snapshot-id
+	* start-time
+	* status
+	* tag-key
+	* tag-value
+	* tag:key
+	* volume-id
+	* volume-size
+	"""
+
+	parser.values.ensure_value("filters", {})
+
+	if "=" not in value:
+		parser.error("A filter must take the form 'KEY=VALUE'")
+
+	key, value = value.partition("=")[::2]
+	key = key.strip()
+	value = value.strip()
+
+	if key in parser.values.filters:
+		parser.error("A filter was already set for {0}".format(key))
+
+	parser.values.filters[key] = value
+
+def option_parser():
+	usage = "usage: %prog [options]"
+	version = "%prog (" + __version__ + ")"
+	description = "Describe EC2 snapshots."
+	parser = OptionParser(usage=usage, version=version, description=description)
+	k.stdlib.logging.config.get_logging_options(parser)
+	k.aws.config.get_aws_options(parser)
+	k.aws.config.get_region_option(parser)
+	k.aws.config.get_format_option(parser, ['json', 'tsv'], 'tsv')
+
+	parser.add_option("-a", "--all", dest="all", action="store_true",
+			help=("Describe all snapshots, public, private or shared,"
+			" to which you have access."))
+	parser.add_option("--owner", dest="owner",
+			help=("Only snapshots owned by the specified users are described."
+			" OWNER may be: 1. a user's account id for snapshots owned by that user,"
+			" 2. 'self' for snapshots owned by you, or 3. 'amazon' for snapshots owned"
+			" by Amazon."))
+	parser.add_option("--restorable-by", dest="restorable_by", default=None, metavar="USER",
+			help=("Only snapshsots with restorable permissions as specified are"
+			" described. USER may be any of the following: 1. a user's account id ("
+			"snapshots owned by you for which you have granted explicit CreateVolume"
+			" permissions to that user), 2. self (snapshots for which you have explicit"
+			" CreateVolume permissions), or 3. all (snapshots with public CreateVolume"
+			" permissions)"))
+	parser.add_option("-F", "--filter", dest="filters", type="str", action="callback",
+			callback=add_filter)
+
+	return parser
+
+if (__name__ == "__main__"):
+	main()
+
+# Local Variables:
+# tab-width: 4
+# indent-tabs-mode: t
+# End:
+
