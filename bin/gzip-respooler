@@ -1,0 +1,176 @@
+#!/usr/bin/env python
+import os
+import os.path
+import sys
+import time
+import datetime
+import logging
+import cStringIO
+import gzip
+import k.stdlib.logging.config
+from optparse import OptionParser
+
+def process_file(spool_file, gz_spool, min_size):
+	"""
+	If the existing tmp file is > 5 megs in size, it increments the part number
+	by one and then uploads the contents of the tmp file as a part (and then
+	deletes it).
+	Then it takes the message, and appends the gzipped data to the current tmp
+	file (which it creates if needed).
+	Finally, it deletes the source spool file.
+	"""
+	data = compress_contents(spool_file)
+	tmp_file_name = gz_spool + "/temp/gz_temp_spool.gz"
+	with open(tmp_file_name, "a") as writer:
+		writer.write(data)
+	os.remove(spool_file)
+	statinfo = os.stat(tmp_file_name)
+	if statinfo.st_size > min_size:
+		complete_file(gz_spool)
+
+def complete_file(gz_spool):
+	"""
+	Moves currently active temp spool file to the send directory
+	if it exists.
+	"""
+	tmp_file_name = gz_spool + "/temp/gz_temp_spool.gz"
+	if os.path.exists(tmp_file_name):
+		new_file_name = gz_spool + "/send/" + str(time.time()) + ".gz"
+		os.rename(tmp_file_name, new_file_name)
+		logging.info("New file created: %s" % new_file_name)
+
+def compress_contents(spool_file):
+	"""
+	Open a spool file, gzip the contents and return the data
+	"""
+	# read file
+	with open(spool_file, "r") as reader:
+		contents = ''.join(reader.readlines())
+		buff = cStringIO.StringIO()
+		try:
+			gzip_to_buffer(buff, contents)
+			return buff.getvalue()
+		finally:
+			buff.close()
+
+def gzip_to_buffer(buf, contents):
+	"""
+	Writes data out to a buffer in gzip format
+	"""
+	with gzip.GzipFile(filename='/tmp/fake', mode='wb', fileobj=buf) as gz_obj:
+		gz_obj.write(contents)
+
+def check_dir_contents(spool):
+	"""
+	Checks to see if there are waiting files to be processes.
+	"""
+	dir_contents = set(sorted(os.listdir(spool)))
+	if len(dir_contents) > 0:
+		if check_dir_contents.prior_dir_contents != dir_contents:
+			logging.info(
+				"spool dir has {0} waiting items".format(len(dir_contents)))
+			check_dir_contents.prior_dir_contents = dir_contents
+		return True
+	else:
+		# No files to process
+		return False
+# Static vars for this function.
+check_dir_contents.prior_dir_contents = set()
+
+def run_next_compression(txt_spool, gz_spool, min_size):
+	"""
+	Runs through all current files in the spool dir, and compresses them
+	"""
+	processed = False
+	while True:
+		files = sorted(os.listdir(txt_spool))
+		if len(files) > 0:
+			spool_file = txt_spool + "/" + files[0]
+			process_file(spool_file, gz_spool, min_size)
+			processed = True
+		else:
+			return processed
+
+def watch_directory(txt_spool, gz_spool, min_size, sleep, timeout):
+	"""
+	Watches a directory.  If there are files in that dir, they will get picked
+	up, read, compressed and appended to a temp spool file until said file
+	is minimum 5 megs.
+	"""
+	last = datetime.datetExceptionime.now()
+	while True:
+		processed = run_next_compression(txt_spool, gz_spool, min_size)
+		if processed:
+			last = datetime.datetime.now()
+		else:
+			if timeout > 0:
+				since_last = datetime.datetime.now() - last
+				if since_last.days > 0 or since_last.seconds > timeout:
+					complete_file(gz_spool)
+		time.sleep(sleep)
+
+def create_spool_directories(gz_spool):
+	"""
+	Creates the gzip spool directory and it's children /send and /temp
+	"""
+	create_and_validate_directory(gz_spool)
+	create_and_validate_directory(gz_spool + "/temp")
+	create_and_validate_directory(gz_spool + "/send")
+
+def create_and_validate_directory(candidate):
+	"""
+	If a directory does not exist, creates it.
+	Checks to see that it's a directory and not a file, if it is, it
+	raises an exception
+	"""
+	if not os.path.exists(candidate):
+		os.mkdir(candidate)
+	if not os.path.isdir(candidate):
+		raise ValueError("Path is not a directory: %s" % candidate)
+
+def main():
+	parser = optionParser()
+	(options, args) = parser.parse_args()
+	k.stdlib.logging.config.configure_logging(options)
+	if len(args) != 2:
+		parser.print_help()
+		sys.exit(1)
+	txt_spool = os.path.expanduser(args[0])
+	if not os.path.isdir(txt_spool):
+		raise ValueError("Path is not a directory or does not exist: %s" %
+			txt_spool)
+	gz_spool = os.path.expanduser(args[1])
+	create_spool_directories(gz_spool)
+	watch_directory(txt_spool, gz_spool,
+		options.min_size, options.sleep, options.timeout)
+
+def optionParser():
+	usage = "usage: %prog [options] <text spool> <gz spool>\n\n"
+	usage += "Watches a directory and reads in spooled files.\n"
+	usage += "  Files are gzipped and spooled in a new directory"
+	usage += "  with a minimal size of 5 meg."
+
+	parser = OptionParser(usage=usage)
+	k.stdlib.logging.config.get_logging_options(parser)
+	parser.add_option(
+		"--sleep", dest="sleep",
+		help="Time to sleep (in seconds) between disk checks (Default: 0.1)",
+		type=float, default=0.1)
+	parser.add_option(
+		"--min", dest="min_size",
+		help="Min size of gz files (Default: 5 meg)",
+		type=int, default=5*1024*1024)
+	parser.add_option(
+		"--timeout", dest="timeout",
+		help="Length of time to wait before forcing a file larger then --min" +
+			"to spool directory.  Timeout of 0 turns this off. (Default: 900)",
+		type=int, default=900)
+	return parser
+
+if __name__=='__main__':
+	main()
+
+# Local Variables:
+# tab-width: 4
+# indent-tabs-mode: t
+# End:

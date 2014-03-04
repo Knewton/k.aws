@@ -1,0 +1,96 @@
+#!/usr/bin/env python
+import os
+import logging
+import os.path
+import sys
+import boto
+import k.aws.config
+import k.aws.s3
+import k.aws.editor
+import k.stdlib.logging.config
+import yaml
+from boto import exception
+from boto.s3.key import Key
+from optparse import OptionParser
+
+DESCRIPTION = """
+OWNERS.yml must:
+ 1) have a team key containing an email address
+ 2) have an owners key containing a list of email address
+
+Example:
+  team: systems-engineering@knewton.com
+  owners:
+    - devon@knewton.com
+    - pn@knewton.com
+"""
+
+def validate_owners(owners):
+	if len(owners.strip()) == 0:
+		sys.stderr.write("OWNERS.yml must contain content\n")
+		sys.exit(1)
+	try:
+		data = yaml.load(owners)
+		error = False
+		if not data.has_key('team'):
+			error = True
+		if not data["team"]:
+			error = True
+		if not data.has_key('owners'):
+			error = True
+		owners = data["owners"]
+		if not type(owners) == list:
+			error = True
+		if len(owners) == 0:
+			error = True
+		if error:
+			sys.stderr.write(DESCRIPTION)
+			sys.exit(1)
+	except Exception, e:
+		sys.stderr.write("OWNERS.yml is not valid yaml\n%s\n" % str(e))
+		sys.exit(1)
+	return True
+
+def main():
+	parser = optionParser()
+	(options, args) = parser.parse_args()
+	k.stdlib.logging.config.configure_logging(options)
+	try:
+		creds = k.aws.config.get_keys(options)
+		bucket_name = k.aws.s3.get_bucket_name(options)
+		if not bucket_name:
+			sys.stderr.write("-b required\n")
+			sys.exit(1)
+		conn = k.aws.s3.connect(
+			creds, bucket_name=bucket_name, ordinary=options.ordinary)
+		bucket = k.aws.s3.get_bucket(conn, options)
+		key = "_metadata/OWNERS.yml"
+		k.aws.editor.run_editor(
+			options, bucket, key, validate_owners, DESCRIPTION)
+	except boto.exception.S3ResponseError as err:
+		sys.stderr.write("S3ResponseError: %s\n" % err.reason)
+		sys.exit(1)
+	except boto.exception.BotoServerError as err:
+		sys.stderr.write("BotoServerError: %s\n" % err.reason)
+		sys.exit(1)
+
+def optionParser():
+	usage = "usage: %prog [options]\n\n"
+	usage += "Tool for editing a bucket's OWNERS.yml.\n"
+	usage += k.aws.editor.editor_usage()
+
+	parser = OptionParser(usage=usage)
+	k.stdlib.logging.config.get_logging_options(parser)
+	k.aws.config.get_aws_options(parser)
+	k.aws.s3.get_s3_options(parser)
+	k.aws.editor.editor_options(parser, "OWNERS.yml")
+
+	return parser
+
+if __name__ == '__main__':
+	main()
+
+# Local Variables:
+# tab-width: 4
+# indent-tabs-mode: t
+# End:

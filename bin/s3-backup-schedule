@@ -1,0 +1,140 @@
+#!/usr/bin/env python
+import os
+import logging
+import os.path
+import sys
+import boto
+import k.aws.config
+import k.aws.ec2
+import k.aws.s3
+import k.aws.editor
+import k.stdlib.logging.config
+import yaml
+from croniter import croniter
+from boto import exception
+from boto.s3.key import Key
+from optparse import OptionParser
+
+DESCRIPTION = """
+This file dictates the expected backup policy for the bucket, where backups
+are copies to equivalently names buckets in other regions.
+This file should contain two keys: schedule and regions.
+
+Schedule:
+  Contains cron format timing information to declare when jobs should be
+  run.  Actual backup jobs should not be run more then hourly. To understand
+  the cron format, see http://en.wikipedia.org/wiki/Cron or man crontab.
+  Note: backup jobs use a lockfile, so if your backup schedule is too
+  aggressive the next backup will only run when the previous one completes
+
+Regions:
+  Contains a list of regions.
+
+Examples:
+  schedule: "@hourly"
+  regions:
+    - us-west-2
+
+  schedule: "0 */2 * * *"
+  regions:
+    - us-east-1
+"""
+
+ALIASES = [
+	"@reboot",
+	"@yearly",
+	"@annually",
+	"@monthly",
+	"@weekly",
+	"@daily",
+	"@midnight",
+	"@hourly",
+]
+
+REGIONS = []
+
+def validate_backups(backups):
+	if len(backups.strip()) == 0:
+		return # BACKUPS.yml can be empty if no backup is desired
+	data = None
+	try:
+		data = yaml.load(backups)
+	except Exception, e:
+		sys.stderr.write("BACKUPS.yml is not valid yaml\n%s\n" % str(e))
+		sys.exit(1)
+	error = False
+	if not data.has_key('schedule'):
+		error = True
+	if not data["schedule"]:
+		error = True
+	schedule = data['schedule']
+	if schedule.strip() not in ALIASES:
+		try:
+			croniter(schedule)
+		except Exception, e:
+			sys.stderr.write("schedule is not valid cron format\n%s\n" % str(e))
+			sys.exit(1)
+	if not data.has_key('regions'):
+		error = True
+	regions = data["regions"]
+	if not type(regions) == list:
+		error = True
+	if len(regions) == 0:
+		error = True
+	for region in regions:
+		if region not in [r.name for r in REGIONS]:
+			sys.stderr.write("%s is not a valid region\n" % region)
+			sys.exit(1)
+	if error:
+		sys.stderr.write(DESCRIPTION)
+		sys.exit(1)
+	return True
+
+def main():
+	parser = optionParser()
+	(options, args) = parser.parse_args()
+	k.stdlib.logging.config.configure_logging(options)
+	try:
+		creds = k.aws.config.get_keys(options)
+		bucket_name = k.aws.s3.get_bucket_name(options)
+		if not bucket_name:
+			sys.stderr.write("-b required\n")
+			sys.exit(1)
+		econn = k.aws.ec2.connect(creds)
+		REGIONS.extend(econn.get_all_regions())
+		conn = k.aws.s3.connect(
+			creds, bucket_name=bucket_name, ordinary=options.ordinary)
+		bucket = k.aws.s3.get_bucket(conn, options)
+		key = "_metadata/BACKUPS.yml"
+		if options.delete == True:
+			k.aws.editor.delete_metadata_file(bucket, key)
+		else:
+			k.aws.editor.run_editor(
+				options, bucket, key, validate_backups, DESCRIPTION)
+	except boto.exception.S3ResponseError as err:
+		sys.stderr.write("S3ResponseError: %s\n" % err.reason)
+		sys.exit(1)
+	except boto.exception.BotoServerError as err:
+		sys.stderr.write("BotoServerError: %s\n" % err.reason)
+		sys.exit(1)
+
+def optionParser():
+	usage = "usage: %prog [options]\n\n"
+	usage += "Tool for editing a bucket's BACKUPS.yml.\n"
+	usage += k.aws.editor.editor_usage()
+
+	parser = OptionParser(usage=usage)
+	k.stdlib.logging.config.get_logging_options(parser)
+	k.aws.config.get_aws_options(parser)
+	k.aws.s3.get_s3_options(parser)
+	k.aws.editor.editor_options(parser, "BACKUPS.yml", delete=True)
+
+	return parser
+
+if __name__ == '__main__':
+	main()
+
+# Local Variables:
+# tab-width: 4
+# indent-tabs-mode: t
+# End:

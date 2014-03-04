@@ -1,0 +1,62 @@
+#!/usr/bin/env python
+import os
+import logging
+import os.path
+import sys
+import boto
+import k.aws.config
+import k.aws.s3
+import k.aws.editor
+import k.stdlib.logging.config
+from boto import exception
+from boto.s3.key import Key
+from optparse import OptionParser
+
+def validate_readme(readme):
+	if len(readme.strip()) > 0:
+		return True
+	sys.stderr.write("README must contain content\n")
+	sys.exit(1)
+
+def main():
+	parser = optionParser()
+	(options, args) = parser.parse_args()
+	k.stdlib.logging.config.configure_logging(options)
+	try:
+		creds = k.aws.config.get_keys(options)
+		bucket_name = k.aws.s3.get_bucket_name(options)
+		if not bucket_name:
+			sys.stderr.write("-b required\n")
+			sys.exit(1)
+		conn = k.aws.s3.connect(
+			creds, bucket_name=bucket_name, ordinary=options.ordinary)
+		bucket = k.aws.s3.get_bucket(conn, options)
+		key = "_metadata/README"
+		k.aws.editor.run_editor(options, bucket, key, validate_readme)
+	except boto.exception.S3ResponseError as err:
+		sys.stderr.write("S3ResponseError: %s\n" % err.reason)
+		sys.exit(1)
+	except boto.exception.BotoServerError as err:
+		sys.stderr.write("BotoServerError: %s\n" % err.reason)
+		sys.exit(1)
+
+def optionParser():
+	usage = "usage: %prog [options]\n\n"
+	usage += "Tool for editing a bucket's README.\n"
+	usage += k.aws.editor.editor_usage()
+
+	parser = OptionParser(usage=usage)
+	k.stdlib.logging.config.get_logging_options(parser)
+	k.aws.config.get_aws_options(parser)
+	k.aws.s3.get_s3_options(parser)
+	k.aws.editor.editor_options(parser, "README")
+
+	return parser
+
+if __name__ == '__main__':
+	main()
+
+# Local Variables:
+# tab-width: 4
+# indent-tabs-mode: t
+# End:

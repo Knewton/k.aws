@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-"""s3-compare-listings -e <knewton environment> -b <bucket> [optional params]
+"""s3-compare-listings -e <aws environment> -b <bucket> [optional params]
 
 The -e and -b flags are required and are the standard k.aws.s3
 options.  Use "pydoc k.aws.s3" to find out more about these options

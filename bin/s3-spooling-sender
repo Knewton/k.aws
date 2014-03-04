@@ -1,0 +1,308 @@
+#!/usr/bin/env python
+import os
+import sys
+import time
+import logging
+import cStringIO
+import gzip
+import boto
+import k.aws.config
+import k.aws.s3
+import k.stdlib.logging.config
+from collections import namedtuple
+from Queue import Empty
+from multiprocessing import Process, Queue
+from optparse import OptionParser
+from datetime import datetime
+from boto import exception
+
+def check_open_uploads(bucket, upload_info):
+	"""
+	Loop through all active uploads in the bucket. Close out any old, orphaned
+	uploads, and add any uploads that match the runtime args of this process
+	to the open_oploads struct and return.
+	"""
+	for upload in bucket.list_multipart_uploads():
+		if upload.key_name.startswith(upload_info.prefix):
+			name = upload.key_name
+			file_time = parse_key_for_time(name, upload_info)
+			ordinal = parse_key_for_ordinal(name)
+			diff = datetime.now() - file_time
+			if diff.days > 0 or diff.seconds > 7200:
+				end_upload(upload)
+			else:
+				if upload.key_name.find(upload_info.machine_id) > -1:
+					end_upload(upload)
+
+def end_upload(upload):
+	"""
+	Completes the upload
+	"""
+	part_number = get_max_part_number(upload)
+	if part_number == 0:
+		upload.cancel_upload()
+	else:
+		upload.complete_upload()
+		logging.info("Completing upload: %s " % (upload))
+
+def get_hour_for_time(file_time):
+	strrepr = file_time.strftime("%Y/%m/%d/%H")
+	return datetime.strptime(strrepr, "%Y/%m/%d/%H")
+
+def gen_bucket_key_name(upload_info, file_time, ordinal):
+	"""
+	Creates a filename based off of prefix, machine_id and the file time.
+	Filename: <prefix>/<year>/<month>/<day>/<hour>-<machine_id>-<ordinal>.gz
+	"""
+	parts = []
+	parts.append(upload_info.prefix)
+	if not upload_info.prefix.endswith("/"):
+		parts.append("/")
+	parts.append(file_time.strftime("%Y/%m/%d/%H"))
+	parts.append("-")
+	parts.append(upload_info.machine_id)
+	parts.append("-")
+	parts.append(str(ordinal))
+	parts.append(".gz")
+	return ''.join(parts)
+
+def parse_key_for_time(name, upload_info):
+	"""
+	Filename: <prefix>/<year>/<month>/<day>/<hour>-<machine_id>-<ordinal>.gz
+	you can get the datetime of the year/month/day/hour.
+	"""
+	stripped = name.replace(upload_info.prefix, '')
+	if stripped.startswith('/'):
+		stripped = stripped[1:]
+	parts = stripped.split("/")
+	if not len(parts) == 4:
+		raise Exception("file name does not follow upload format %s" % name)
+	end = parts[-1].split("-")
+	file_time = datetime.strptime(
+		"%s/%s/%s/%s" % (parts[0], parts[1], parts[2], end[0]), "%Y/%m/%d/%H")
+	return file_time
+
+def parse_key_for_ordinal(name):
+	"" don't love it
+but it's a damn sight better than most other options currently available"
+	Filename: <prefix>/<year>/<month>/<day>/<hour>-<machine_id>-<ordinal>.gz
+	you can parse for ordinal.
+	"""
+	parts = name.split("-")
+
+	return int(parts[-1].split('.')[0])
+
+def get_max_part_number(multipart):
+	"""
+	Loops through a multipart upload's parts to find the current max part number
+	"""
+	max_part = None
+	parts = multipart.get_all_parts()
+	while len(parts) > 0:
+		max_part = parts[-1]
+		parts = multipart.get_all_parts(
+			part_number_marker=multipart.next_part_number_marker)
+	if max_part:
+		return max_part.part_number
+	return 0
+
+def create_new_upload(bucket, upload_info, state, file_time):
+	"""
+	Connects to s3.
+	Checks to see if bucket_key already exists and increments a counter
+	until we can find a free filename.  Then initiaties a new multipart upload
+	and records that in state.
+	Closes connection.
+	"""
+	counter = 0
+	bucket_key = gen_bucket_key_name(upload_info, file_time, counter)
+	while bucket.get_key(bucket_key):
+		counter += 1
+		bucket_key = gen_bucket_key_name(upload_info, file_time, counter)
+	bucket.initiate_multipart_upload(bucket_key)
+	state['upload'] = {
+		'last_part_number': 0,
+		'file_time': file_time,
+		'ordinal': counter
+	}
+	state['current_key'] = bucket_key
+	return bucket_key
+
+def get_upload(bucket, bucket_key):
+	"""
+	Loops through open uploads to find the requested active upload.
+	Returns None if not found.
+	"""
+	for upload in bucket.list_multipart_uploads():
+		if upload.key_name == bucket_key:
+			return upload
+	if not upload:
+		logging.error("can't find multipart upload %s" % bucket_key)
+
+def upload_part(creds, ordinary, bucket_name, bucket_key,
+		spool_file, part_number):
+	"""
+	Connect to s3 and find the multipart upload <bucket_key>.  Open the file,
+	compress it and upload the part.  Close the s3 connection.
+	Intended to be run as a child process.
+	"""
+	conn = k.aws.s3.connect(
+		creds, bucket_name=bucket_name, ordinary=ordinary)
+	bucket = conn.get_bucket(bucket_name)
+	upload = get_upload(bucket, bucket_key)
+	if not upload:
+		return
+	# read file
+	with open(spool_file, "r") as reader:
+		upload.upload_part_from_file(reader, part_number)
+	os.remove(spool_file)
+	conn.close()
+
+def should_close_for_small_file(spool_file, options):
+	"""
+	Files smaller then 5 megs can only be at the end of a multipart upload.
+	This function determines if a file should close out the upload
+	"""
+	statinfo = os.stat(spool_file)
+	if statinfo.st_size < options.min_size:
+		return True
+	return False
+
+def close_finished_upload(bucket, state):
+	"""
+	When based on time or file size an upload needs to be closed, this
+	will close it based on the information in state
+	"""
+	if state['current_key']:
+		upload = get_upload(bucket, state['current_key'])
+		if upload:
+			end_upload(upload)
+			state['current_key'] = None
+			state['upload'] = None
+
+def get_bucket_key(bucket, upload_info, state):
+	"""
+	Gets the file time, and determines if it should go into the current
+	open multipart upload.  If so, it returns that key.  If not, it closes
+	it out and creates a new key.
+	"""
+	file_time = get_hour_for_time(datetime.now())
+	if state['upload']:
+		if file_time == state['upload']['file_time']:
+			return state['current_key']
+		else:
+			close_finished_upload(bucket, state)
+	bucket_key = create_new_upload(bucket, upload_info, state, file_time)
+	return bucket_key
+
+def process_file(bucket, creds, upload_info, spool_file, state, options):
+	"""
+	Loops through files in the spool dir and acts upon each one.
+	Get the name of the bucket key to upload to.  If the proposed key already
+	exists, use that, if not, create a new multipart upload.  Increment
+	the part number from the last known attempted part number.
+	Start a process to upload the file, and wait until either it's done or
+	times out.
+	"""
+	bucket_key = get_bucket_key(bucket, upload_info, state)
+	state['upload']['last_part_number'] += 1
+	close = should_close_for_small_file(spool_file, options)
+	attempts = 0
+	while True:
+		p = Process(target=upload_part, args=(creds, options.ordinary,
+			upload_info.bucket_name, bucket_key, spool_file,
+			state['upload']['last_part_number']))
+		p.start()
+		p.join(options.timeout)
+		if p.is_alive():
+			p.terminate()
+			attempts += 1
+			if attempts > 5:
+				return
+		else:
+			if close:
+				close_finished_upload(bucket, state)
+			return
+
+def run_next_upload(bucket, creds, upload_info, spool_dir, state, options):
+	"""
+	As long as there are files in the dir to process, keep going, otherwise
+	return and sleep
+	"""
+	while True:
+		files = sorted(os.listdir(spool_dir))
+		if len(files) > 0:
+			spool_file = spool_dir + "/" + files[0]
+			process_file(bucket, creds, upload_info, spool_file, state, options)
+		else:
+			return
+
+def watch_directory(creds, upload_info, spool_dir, options):
+	"""
+	Watches a directory.  If there are files in that dir, they will get picked
+	up, read and uploaded to s3 as a part of a multipart upload.
+	"""
+	conn = k.aws.s3.connect(
+		creds, bucket_name=upload_info.bucket_name, ordinary=options.ordinary)
+	bucket = conn.get_bucket(upload_info.bucket_name)
+	check_open_uploads(bucket, upload_info)
+	state = {
+		'current_key': None,
+		'close': False,
+		'upload': None
+	}
+	while True:
+		run_next_upload(bucket, creds, upload_info, spool_dir, state, options)
+		time.sleep(options.sleep)
+
+UploadInfo = namedtuple('UploadInfo', ['bucket_name', 'prefix', 'machine_id'])
+
+def main():
+	parser = optionParser()
+	(options, args) = parser.parse_args()
+	k.stdlib.logging.config.configure_logging(options)
+	if len(args) != 3:
+		parser.print_help()
+		sys.exit(1)
+	try:
+		creds = k.aws.config.get_keys(options)
+		bucket_name = k.aws.s3.get_bucket_name(options)
+		spool_dir = args[2]
+		upload_info = UploadInfo(bucket_name, args[0], args[1])
+		watch_directory(creds, upload_info, spool_dir, options)
+	except boto.exception.BotoServerError, e:
+		sys.stderr.write(str(e))
+		sys.exit(1)
+
+def optionParser():
+	usage = "usage: %prog [options] <prefix> <machine id> <spool dir>\n\n"
+	usage += "Watches a directory and reads in spooled files."
+	usage += " Files are uploaded as a multi-part s3 upload."
+	usage += " If a file is less then 5 meg, it will be taken as a signal to"
+	usage += " Close out the mutli-part upload and start another."
+
+	parser = OptionParser(usage=usage)
+	k.stdlib.logging.config.get_logging_options(parser)
+	k.aws.config.get_aws_options(parser, rw=True)
+	k.aws.s3.get_s3_options(parser)
+	parser.add_option(
+		"--sleep", dest="sleep",
+		help="Time to sleep (in seconds) between disk checks (Default: 0.1)",
+		type=float, default=0.1)
+	parser.add_option(
+		"--timeout", dest="timeout",
+		help="Timeout for uploading processes (in seconds) (Default: 60)",
+		type=int, default=60)
+	parser.add_option(
+		"--min", dest="min_size",
+		help="Min size of gz files (Default: 5 meg)",
+		type=int, default=5*1024*1024)
+	return parser
+
+if __name__=='__main__':
+	main()
+
+# Local Variables:
+# tab-width: 4
+# indent-tabs-mode: t
+# End:

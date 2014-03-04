@@ -11,7 +11,7 @@ obj.parse_args() is invoked.
     ======                           =========
     -A, --access-key                 obj.access_key (str)
     -S, --secret-key                 obj.secret_key (str)
-    -e, --env                        obj.knewton_env (str)
+    -e, --env                        obj.aws_env (str)
     --ro                             obj.readwrite (bool)
     --rw                             obj.readwrite (bool)
     --file                           obj.forcefile (bool)
@@ -24,7 +24,7 @@ authentication credentials, the k.aws.config.get_keys() call.
 The get_keys() call will attempt to get credentials for use from the
 following sources:
 
- * The environment passed in via -e, and stored in obj.knewton_env
+ * The environment passed in via -e, and stored in obj.aws_env
  * The -A/-S pair of obj.access_key and obj.secret_key.
  * The file that --file points to/obj.forcefile
 
@@ -34,18 +34,19 @@ takes on a special meaning.  So, given a name, e.g. 'stack_iam' that
 doesn't match an environment, an attempt to open a file called
 /etc/knewton/configuration/aws/<that_name>.yml will happen.  If that
 file can be opened and read then the aws credentials will be read from
-there.  'stack_iam' should be present on all Knewton platform hosts,
-though there could be others in the future.
+there.
 
 If obj.forcefile isn't set to True:
 
  - get_keys() will first attempt to load credentials from files in the
-   locations that are standard at knewton, e.g. ~/.aws/*-conf.
+   a variety of locations: ~/.aws/*-conf, ~/aws/*.conf,
+   /etc/knewton/configurations/aws/*.yml, ~/.k.aws/*.yml
 
 If obj.forcefile is set to True:
 
  - get_keys() will try to load credentials from files in the locations
-   that are standard at knewton, e.g. ~/.aws/*-conf.
+   a variety of locations: ~/.aws/*-conf, ~/aws/*.conf,
+   /etc/knewton/configurations/aws/*.yml, ~/.k.aws/*.yml
 
 In both cases, the collections.namedtuple 'AwsCreds' will be returned,
 which consists of the following fields:
@@ -112,8 +113,8 @@ RegionAwsCreds = namedtuple('RegionAwsCreds', ['region_name', 'creds'])
 
 ManualOptions = defaultnamedtuple(
 	'ManualOptions',
-	["access_key", "secret_key", "knewton_env", "readwrite", "forcefile", "forceiam"],
-	access_key=None, secret_key=None, knewton_env=None, readwrite=None,
+	["access_key", "secret_key", "aws_env", "readwrite", "forcefile", "forceiam"],
+	access_key=None, secret_key=None, aws_env=None, readwrite=None,
 	forcefile=None, forceiam=None)
 
 def connection_hash(creds):
@@ -136,7 +137,6 @@ def get_box_iam_keys(account, timeout=0.1):
 	url = "http://169.254.169.254/latest/meta-data/iam/security-credentials/{0}".format(account)
 	try:
 		keys = json.loads(requests.get(url, timeout=timeout).content)
-		# make IAM keys look like our login.knewton.net provided keys
 		keys['accessKeyId']     = keys['AccessKeyId']
 		keys['secretAccessKey'] = keys['SecretAccessKeyId']
 		keys['expiration']      = keys['Expiration']
@@ -425,8 +425,8 @@ def get_keys(options):
 		raise Exception("secret_key needs to exist in your options object")
 
 	env = None
-	if hasattr(options, "knewton_env"):
-		env = options.knewton_env
+	if hasattr(options, "aws_env"):
+		env = options.aws_env
 	if not env:
 		if 'AWS_ACCOUNT' in os.environ:
 			env = os.environ['AWS_ACCOUNT']
@@ -524,9 +524,9 @@ def get_aws_options(parser, rw=False):
 		help=' '.join(["Amazon Secret Key (uses AWS_SECRET_ACCESS_KEY",
 			"environment variable if not set)"]))
 	parser.add_option(
-		"-e", "--env", dest="knewton_env",
-		help=' '.join(["Use passed in Knewton environment to connect",
-			"(production, staging, utility, stack_iam, etc)"]))
+		"-e", "--env", dest="aws_env",
+		help=' '.join(["Use passed in AWS environment (account) to connect",
+			"(production, staging, stack_iam, etc)"]))
 	if rw:
 		parser.add_option(
 			"--ro", dest="readwrite",
@@ -546,7 +546,7 @@ def get_aws_options(parser, rw=False):
 		action="store_true")
 	parser.add_option(
 		"--file", "--forcefile", dest="forcefile",
-		help="Force use of files in knewton config (Default: False)",
+		help="Force use of files in k.config (Default: False)",
 		default=False,
 		action="store_true")
 	parser.add_option(

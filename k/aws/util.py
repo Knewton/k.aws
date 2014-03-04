@@ -77,8 +77,6 @@ def yield_aws_data(fetcher, fetcher_next_flag, marker_lookup, data_lookup, yield
 
 
 ##### EC2 pricing information
-# This code is adapted from knewton_crab_stacker.functions.price.
-
 #: pricing URL
 PRICE_URL = "http://aws.amazon.com/ec2/pricing/pricing-on-demand-instances.json"
 

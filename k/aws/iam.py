@@ -15,9 +15,7 @@ def connect(creds):
 
 	:rtype: boto.iam.connection.IAMConnection
 
-	Note IAM cannot authenticate a user using STS credentials.
-	At Knewton we use this for our kerberos bridge, so for now
-	this code may fail, so some checking nees to be added"""
+	Note IAM cannot authenticate a user using STS credentials."""
 	if isinstance(creds, AwsCreds):
 		return boto.connect_iam(**connection_hash(creds))
 	elif isinstance(creds, RegionAwsCreds):
@@ -35,14 +33,14 @@ def get_all_users(conn):
 	users.  The amazon interface presents a "next" token that has to
 	be guarded.  This makes that easier.  However it doesn't present
 	the returned object, only the list of user dicts
-	
+
 	Enables this sort of search:
 	In [210]: r = get_all_users(iconn)
-	
+
 	In [211]: for user in r:
 	if user['user_id'] == iam_user:
 	    print user
-	
+
 	:type conn: boto.iam.connection object
 	:param conn: object as returned by connect()
 	"""

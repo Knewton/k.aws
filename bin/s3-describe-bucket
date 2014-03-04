@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-"""s3-describe-bucket -e <knewton environment> -b <bucket> [-p <prefix>] [optional params]
+"""s3-describe-bucket -e <aws environment> -b <bucket> [-p <prefix>] [optional params]
 
 The -e and -b flags are required and are the standard k.aws.s3
 options.  Use "pydoc k.aws.s3" to find out more about these options

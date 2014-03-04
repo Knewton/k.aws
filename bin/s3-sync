@@ -36,11 +36,11 @@ def sync(sourcebucket, targetbucket, mod=False):
 
 def get_creds(options):
 	sourceopts = k.aws.config.ManualOptions(
-		None, None, options.knewton_env, False, options.forcefile)
+		None, None, options.aws_env, False, options.forcefile)
 	sourcecreds = k.aws.config.get_keys(sourceopts)
-	env2 = options.knewton_env2
+	env2 = options.aws_env2
 	if not env2:
-		env2 = options.knewton_env2
+		env2 = options.aws_env2
 	targetopts = k.aws.config.ManualOptions(
 		None, None, env2, True, options.forcefile)
 	targetcreds = k.aws.config.get_keys(targetopts)
@@ -77,12 +77,12 @@ def optionParser():
 	parser = OptionParser(usage=usage)
 	k.stdlib.logging.config.get_logging_options(parser)
 	parser.add_option(
-		"-e", "--env", dest="knewton_env",
-		help=' '.join(["Knewton environment for source bucket",
-			"(production, staging, utility, stack_iam, etc)"]))
+		"-e", "--env", dest="aws_env",
+		help=' '.join(["AWS environment for source bucket",
+			"(production, staging, etc)"]))
 	parser.add_option(
-		"-E", "--env2", dest="knewton_env2",
-		help=' '.join(["Knewton environment for target bucket",
+		"-E", "--env2", dest="aws_env2",
+		help=' '.join(["AWS environment for target bucket",
 			"(production, staging, utility, stack_iam, etc)"]))
 	parser.add_option(
 		"-o", dest="ordinary", default=False, action="store_true",
@@ -97,7 +97,7 @@ def optionParser():
 		action="store_true")
 	parser.add_option(
 		"--file", dest="forcefile",
-		help="Force use of files in knewton config (Default: readonly)",
+		help="Force use of files in k.config (Default: readonly)",
 		default=False,
 		action="store_true")
 	parser.add_option(

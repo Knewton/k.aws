@@ -17,10 +17,7 @@ def connect(creds):
 
 	:rtype: boto.cloudformation.connection.CloudFormationConnection
 
-	Note: IAM cannot authenticate a user using STS credentials.
-	At Knewton we use this for our kerberos bridge, so for now
-	this code may fail, so some checking needs to be added
-	"""
+	Note: IAM cannot authenticate a user using STS credentials."""
 	if isinstance(creds, AwsCreds):
 		return boto.connect_cloudformation(**connection_hash(creds))
 	elif isinstance(creds, RegionAwsCreds):
