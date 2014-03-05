@@ -1,6 +1,6 @@
 PyYAML>=3.09,<4.0
 boto>=2.9.5,<2.10
-requests==1.1.0-knewton
+requests==1.1.0
 sh==1.04
 k.stdlib>=0.1.7,<0.2
 cov-core>=1.3,<2.0
