@@ -18,8 +18,8 @@ __pycache__
 
 # coverage files
 .coverage
-htmlcov
 coverage.xml
+htmlcov
 
 # ide files
 .komodoproject

@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-import glob
 import os.path
 import re
 from setuptools import Command, find_packages, setup
@@ -29,10 +28,10 @@ def parse_requirements(file_name):
 setup(
 	name = "k.aws",
 	version = "0.11",
-	url = "https://wiki.knewton.net/index.php/Tech",
+	url = "https://github.com/Knewton/k.aws",
 	author = "Devon Jones",
 	author_email = "devon@knewton.com",
-	license = "Proprietary",
+	license = "Apache Software License",
 	scripts = [
 		"bin/asg-change-key",
 		"bin/asg-from-instance",
@@ -89,6 +88,6 @@ setup(
 	package_data = {"config": ["requirements.txt"]},
 	install_requires = parse_requirements("requirements.txt"),
 	tests_require = parse_requirements("requirements.txt"),
-	description = "Knewton libraries for dealing with Amazon Web Services.",
+	description = "Knewton libraries for dealing with Amazon Web Services",
 	long_description = "\n" + open("README.md").read(),
 )
