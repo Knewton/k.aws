@@ -27,8 +27,7 @@ def prune_snapshots(conn, instance_id, keep, prefix=None, dryrun=False):
 	method, in this file.
 	:type conn: boto.rds.RDSConnection
 
-	:param instance_id: The identifier of the database \
-	(e.g. database-knewdle)
+	:param instance_id: The identifier of the database
 	:type instance_id: str
 
 	:param keep: The number of prior snapshots to keep.
@@ -75,8 +74,7 @@ def create_snapshot(conn, instance_id, prefix=None, dryrun=False):
 	method, in this file.
 	:type conn: boto.rds.RDSConnection
 
-	:param instance_id: The identifier of the database \
-	(e.g. database-knewdle)
+	:param instance_id: The identifier of the database
 	:type instance_id: str
 
 	:param prefix: Prepend this prefix to the name of the snapshot, \

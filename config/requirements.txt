@@ -10,3 +10,8 @@ pytest>=2.3.0,<2.4
 pytest-cov>=1.5,<1.6
 mock==1.0.1
 pylint==0.25.1
+croniter==0.3.3
+python-dateutil==2.2
+zope.interface==4.0.5
+six==1.4.1
+

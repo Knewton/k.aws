@@ -19,10 +19,10 @@ OWNERS.yml must:
  2) have an owners key containing a list of email address
 
 Example:
-  team: systems-engineering@knewton.com
+  team: someteam@yourcompany.com
   owners:
-    - devon@knewton.com
-    - pn@knewton.com
+    - someperson@yourcompany.com
+    - someotherperson@yourcompany.com
 """
 
 def validate_owners(owners):

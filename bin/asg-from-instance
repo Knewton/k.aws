@@ -16,9 +16,7 @@
 # "autoscaling:DescribeAutoScalingGroups",
 #
 # An example:
-#   700 pn@PN-mac 02:27 ~/dvcs/lib/python/k.aws $ bin/asg-from-instance -e staging --ip-lookup ec2-23-22-98-252.compute-1.amazonaws.com 
-#   PN-cassandra-CassandraGroupAxxx32653432653762322d363532342d313165322d623430362d633832613134303433663363-1UMG6ZCM0W7EI
-#   701 pn@PN-mac 02:27 ~/dvcs/lib/python/k.aws $
+#   700 pn@PN-mac 02:27 ~/dvcs/lib/python/k.aws $ bin/asg-from-instance -e staging --ip-lookup ec2-1-1-1-1.compute-1.amazonaws.com 
 
 
 

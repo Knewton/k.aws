@@ -1,9 +1,11 @@
 # Utilities that are useful in other k.aws modules
 
+import yaml
 import json
 import re
 import urllib2
 import warnings
+from k.aws.config import K_AWS_PATH
 
 def default_data_lookup(response):
 	return response
@@ -105,13 +107,13 @@ type_map = {
 }
 
 #: Conversion from the account id to the default key-pair name
-account_id_to_keypair_map = {
-	'933536168873' : 'ANALYTICS-001-2013-08-29',
-	'591455459439' : 'PRODUCTION-001-2013-08-22',
-	'957700444419' : 'STAGING-001-2013-08-22',
-	'512319209877' : 'UTILITY-001-2013-08-22',
-	'191918158150' : 'UAT-001-2013-08-29'
-}
+account_id_to_keypair_map = populate_account_id_to_keypair_map()
+
+def populate_account_id_to_keypair_map()
+	if os.path.exists(K_AWS_PATH + "/keypairs.yml"):
+		with open(K_AWS_PATH + "/keypairs.yml") as keys:
+			return yaml.load(keys)
+	return {}
 
 def get_region_key(my_region):
 	"""

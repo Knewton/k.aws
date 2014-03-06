@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-./bin/sdb-backup -e utility -d JenkinsBuilds ./databags
+./bin/sdb-backup -e utility -d SomeDomain ./databags
 """
 import json
 import k.aws.config

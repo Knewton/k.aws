@@ -6,17 +6,6 @@
 #
 # E.g.:
 # 644 pn@PN-mac 05:13 ~/dvcs/lib/python/k.aws $ time find-cfn-resource.py -e staging --forcefile --elb_stacks=QA-RecRec,QA-KPIP-Router,QA-MockOSB --resource_type=AWS::ElasticLoadBalancing::LoadBalancer
-# {
-#   "QA-MockOSB": [
-#     "QA-MockOS-ElasticL-QNKVOY0NBJPU"
-#   ], 
-#   "QA-RecRec": [
-#     "QA-RecRec-ElasticL-BJ6GR7H225NE"
-#   ], 
-#   "QA-KPIP-Router": [
-#     "QA-KPIP-R-ElasticL-1G5PICMNF9HGR"
-#   ]
-# }
 
 import os
 import logging

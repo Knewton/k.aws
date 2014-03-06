@@ -46,10 +46,10 @@ To compare cassandra backups from the "monthly" prefix to one of the
 "backup" prefix, for a particular token in the cluster on a particular
 day and time, you can do this:
 
-  ./s3-compare-listings -B biggie-prod-cassandra \
-    -b biggie-prod-cassandra \
-    -p monthly/us-east-1/Biggie-Cassandra/113427455640312821154458202479064646084/201211010338 \
-    -P backup/us-east-1/Biggie-Cassandra/113427455640312821154458202479064646084/201211010338 \
+  ./s3-compare-listings -B somebucket \
+    -b someotherbucket \
+    -p monthly/us-east-1/some/key \
+    -P backup/us-east-1/some/key \
     -e utility
 
 This will use some default values, e.g. returning any output in a unified-diff format to stdout.
