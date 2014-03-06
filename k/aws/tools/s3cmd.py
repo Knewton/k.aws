@@ -26,7 +26,7 @@ class S3CmdTool(ToolBase):
 		sh.virtualenv(S3CMD_HOME)
 		sh.mkdir("-p", TOOL_HOME + "/bin")
 		pip = sh.Command(S3CMD_HOME + "/bin/pip")
-		pip("install", "--index-url=http://pypi.knewton.net/simple", "s3cmd")
+		pip("install", "s3cmd")
 		sh.ln("-s", S3CMD_HOME + "/bin/s3cmd", TOOL_HOME + "/bin/s3cmd")
 
 	def installed(self):
